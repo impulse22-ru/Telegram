@@ -9,11 +9,15 @@ import (
 type videosRepo struct{ pg *pgxpool.Pool }
 
 func (r *videosRepo) Insert(ctx context.Context, v Video) error {
+	tags := v.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	_, err := r.pg.Exec(ctx, `
 		INSERT INTO videos (tg_msg_id, file_id, caption, duration_ms, width, height, title, tags, channel_id, posted_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (channel_id, tg_msg_id) DO NOTHING`,
-		v.TgMsgID, v.FileID, v.Caption, v.DurationMs, v.Width, v.Height, v.Title, v.Tags, v.ChannelID, v.PostedAt)
+		v.TgMsgID, v.FileID, v.Caption, v.DurationMs, v.Width, v.Height, v.Title, tags, v.ChannelID, v.PostedAt)
 	return err
 }
 

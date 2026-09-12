@@ -52,7 +52,12 @@ func (s *Server) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
-	videos, err := s.repos.Videos.VisibleFrom(r.Context(), s.feedChannelID, 0, 50)
+	ch, err := s.repos.Channels.GetByTgChatID(r.Context(), s.feedChannelID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"videos": []store.Video{}})
+		return
+	}
+	videos, err := s.repos.Videos.VisibleFrom(r.Context(), ch.ID, 0, 50)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return

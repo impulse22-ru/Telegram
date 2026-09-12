@@ -7,16 +7,18 @@ import (
 
 	"tgcloud/server/internal/auth"
 	"tgcloud/server/internal/store"
+	"tgcloud/server/internal/tgbot"
 )
 
 type Server struct {
-	repos         *store.Repos
-	auth          *auth.Manager
+	repos        *store.Repos
+	auth         *auth.Manager
 	feedChannelID int64
+	bot          *tgbot.Client
 }
 
-func New(repos *store.Repos, am *auth.Manager, feedChannelID int64) *Server {
-	return &Server{repos: repos, auth: am, feedChannelID: feedChannelID}
+func New(repos *store.Repos, am *auth.Manager, feedChannelID int64, bot *tgbot.Client) *Server {
+	return &Server{repos: repos, auth: am, feedChannelID: feedChannelID, bot: bot}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -26,6 +28,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /v1/feed", s.authMW(s.handleFeed))
 	mux.HandleFunc("GET /v1/videos/{id}", s.authMW(s.handleVideoGet))
+	mux.HandleFunc("POST /v1/join", s.authMW(s.handleJoin))
 
 	mux.HandleFunc("POST /v1/shop", s.authMW(s.handleShopCreate))
 	mux.HandleFunc("GET /v1/shops", s.authMW(s.handleShopsList))

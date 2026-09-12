@@ -50,6 +50,10 @@ curl -X POST localhost:8080/v1/auth/telegram \
   -H 'Content-Type: application/json' \
   -d '{"tg_user_id":123456,"name":"demo"}'
 
+# Вступление: канал должен быть в режиме запроса на вступление (request to join);
+# бот — администратором. Worker автоматически одобряет chat_join_request.
+curl -X POST localhost:8080/v1/join -H 'Authorization: Bearer <TOKEN>'
+
 # Лента (с токеном из предыдущего шага)
 curl localhost:8080/v1/feed -H 'Authorization: Bearer <TOKEN>'
 ```
@@ -57,7 +61,7 @@ curl localhost:8080/v1/feed -H 'Authorization: Bearer <TOKEN>'
 ## Статус по этапам
 
 - [x] Этап 0: docker-compose (PG, Redis, локальный Bot API), конфиг, каркас
-- [ ] Этап 1: бот-индексация канала (worker), автодобавление пользователей в канал
+- [x] Этап 1: бот-индексация канала (worker), автодобавление пользователей в канал
 - [ ] Этап 2: API (like, comment, report), лента на Redis ZSET
 - [ ] Этап 3: медиа-релей (HTTP Range, кэш)
 - [ ] Этап 4: клиент — экран ленты + автоплей (форк)

@@ -28,7 +28,9 @@ func New(ctx context.Context, pgDSN, redisAddr string) (*Store, error) {
 	}
 
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
-	if err := rdb.Ping(ctxCtx(ctx)).Err(); err != nil {
+	ctxPing2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel2()
+	if err := rdb.Ping(ctxPing2).Err(); err != nil {
 		return nil, fmt.Errorf("redis ping: %w", err)
 	}
 
@@ -39,10 +41,4 @@ func New(ctx context.Context, pgDSN, redisAddr string) (*Store, error) {
 func (s *Store) Close() {
 	s.PG.Close()
 	_ = s.Redis.Close()
-}
-
-func ctxCtx(ctx context.Context) context.Context {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	_ = cancel
-	return ctx
 }

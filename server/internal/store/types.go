@@ -14,6 +14,16 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Channel struct {
+	ID        int64     `json:"id"`
+	TgChatID  int64     `json:"tg_chat_id"`
+	Title     string    `json:"title"`
+	Kind      string    `json:"kind"`
+	IsPrivate bool      `json:"is_private"`
+	OwnerID   int64     `json:"owner_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Video struct {
 	ID         int64    `json:"id"`
 	TgMsgID    int64    `json:"tg_msg_id"`
@@ -66,6 +76,11 @@ type Order struct {
 
 // --- Репозитории (интерфейсы + реализация на pgxpool) ---
 
+type Channels interface {
+	EnsureByTgChatID(ctx context.Context, tgChatID int64, kind, title string) (int64, error)
+	GetByTgChatID(ctx context.Context, tgChatID int64) (*Channel, error)
+}
+
 type Users interface {
 	Upsert(ctx context.Context, u User) (int64, error)
 	GetByTgID(ctx context.Context, tgID int64) (*User, error)
@@ -101,6 +116,7 @@ type Orders interface {
 }
 
 type Repos struct {
+	Channels Channels
 	Users    Users
 	Videos   Videos
 	Shops    Shops
@@ -110,6 +126,7 @@ type Repos struct {
 
 func NewRepos(s *Store) *Repos {
 	return &Repos{
+		Channels: &channelsRepo{pg: s.PG},
 		Users:    &usersRepo{pg: s.PG},
 		Videos:   &videosRepo{pg: s.PG},
 		Shops:    &shopsRepo{pg: s.PG},

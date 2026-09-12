@@ -14,6 +14,7 @@ import (
 	"tgcloud/server/internal/httpapi"
 	"tgcloud/server/internal/log"
 	"tgcloud/server/internal/store"
+	"tgcloud/server/internal/tgbot"
 )
 
 func main() {
@@ -35,7 +36,11 @@ func run(cfg config.Config) error {
 	defer st.Close()
 
 	am := auth.NewManager(cfg.JWTSecret, cfg.JWTExpiry)
-	srv := httpapi.New(store.NewRepos(st), am, cfg.FeedChID)
+	var bot *tgbot.Client
+	if cfg.BotToken != "" {
+		bot = tgbot.New(cfg.BotAPIBase, cfg.BotToken)
+	}
+	srv := httpapi.New(store.NewRepos(st), am, cfg.FeedChID, bot)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

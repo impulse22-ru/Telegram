@@ -2,41 +2,57 @@ package main
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"tgcloud/server/internal/config"
-	"tgcloud/server/internal/log"
+	"tgcloud/server/internal/indexer"
 	"tgcloud/server/internal/store"
+	"tgcloud/server/internal/tgbot"
 )
 
-// worker — фоновая индексация канала через локальный Bot API.
-// Этап 0-1: точка входа и цикл опроса готовы; наполнение — этап 1 (бот).
+// worker — фоновая индексация ленточного канала.
+// Через локальный Bot API: getUpdates (long polling),
+// channel_post → видео в БД, chat_join_request → автодобавление.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	cfg := config.Load()
-	st, err := store.New(ctx, cfg.PGDSN, cfg.RedisAddr)
+
+	s, err := store.New(ctx, cfg.PGDSN, cfg.RedisAddr)
 	if err != nil {
-		log.Errorf("worker: %v", err)
-		os.Exit(1)
+		log.Fatalf("store: %v", err)
 	}
-	defer st.Close()
+	defer s.Close()
 
-	log.Infof("worker started (feed_chat_id=%d, bot_api=%s)", cfg.FeedChID, cfg.BotAPIBase)
+	if cfg.BotToken == "" || cfg.FeedChID == 0 {
+		log.Fatalf("worker: BOT_TOKEN и FEED_CHAT_ID обязательны (закрытый канал)")
+	}
 
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	bot := tgbot.New(cfg.BotAPIBase, cfg.BotToken)
+	me, err := bot.GetMe()
+	if err != nil {
+		log.Fatalf("worker: Bot API недоступен: %v", err)
+	}
+	log.Printf("worker: bot %s активен, индексирую канал %d", me.Username, cfg.FeedChID)
+
+	ix := indexer.New(bot, store.NewRepos(s), cfg.FeedChID)
+
+	var offset int
 	for {
-		select {
-		case <-ctx.Done():
-			log.Infof("worker stopped")
-			return
-		case <-ticker.C:
-			log.Infof("worker tick — poll pending (бот-индексация появится на этапе 1)")
+		updates, err := bot.GetUpdates(tgbot.GetUpdatesReq{Offset: offset, Timeout: 30, Limit: 100})
+		if err != nil {
+			log.Printf("worker: getUpdates: %v (retry)", err)
+			continue
+		}
+		for _, u := range updates {
+			if ix.Handle(ctx, &u) == indexer.Handled {
+				log.Printf("worker: handled update %d", u.UpdateID)
+			}
+			offset = int(u.UpdateID) + 1
 		}
 	}
 }
