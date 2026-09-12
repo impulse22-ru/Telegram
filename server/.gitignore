@@ -1,0 +1,12 @@
+# Env / secrets
+.env
+
+# Go
+/server/bin/
+*.exe
+
+# Runtime data (bot-api, redis, pg volumes are docker-managed)
+
+# IDE
+.idea/
+.vscode/

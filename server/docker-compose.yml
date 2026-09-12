@@ -1,0 +1,53 @@
+version: "3.9"
+
+x-env: &env
+  POSTGRES_USER: tg
+  POSTGRES_PASSWORD: tg
+  POSTGRES_DB: tiktok
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment: *env
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tg -d tiktok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Локальный Bot API сервер — снимает лимит 50 МБ (upload до 2 ГБ).
+  # Требует ACCESS_HASH и API ID с my.telegram.org (см. .env.example).
+  bot-api:
+    image: aiogram/telegram-bot-api:latest
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?set TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?set TELEGRAM_API_HASH}
+    ports:
+      - "8081:8081"
+    volumes:
+      - botapi:/var/lib/telegram-bot-api
+    command: --local --http-port=8081 --dir=/var/lib/telegram-bot-api
+
+volumes:
+  pgdata:
+  redisdata:
+  botapi:
