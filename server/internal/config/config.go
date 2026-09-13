@@ -7,28 +7,32 @@ import (
 )
 
 type Config struct {
-	Env        string
-	HTTPAddr   string
-	PGDSN      string
-	RedisAddr  string
-	JWTSecret  string
-	JWTExpiry  time.Duration
-	BotAPIBase string // http://localhost:8081
-	BotToken   string
-	FeedChID   int64 // закрытый канал ленты (tg_chat_id)
+	Env           string
+	HTTPAddr      string
+	PGDSN         string
+	RedisAddr     string
+	JWTSecret     string
+	JWTExpiry     time.Duration
+	BotAPIBase    string // http://localhost:8081
+	BotToken      string
+	FeedChID      int64 // закрытый канал ленты (tg_chat_id)
+	RelayPort     string
+	RelayCacheDir string
 }
 
 func Load() Config {
 	return Config{
-		Env:       get("APP_ENV", "dev"),
-		HTTPAddr:  ":" + get("HTTP_PORT", "8080"),
-		PGDSN:     get("PG_DSN", "postgres://tg:tg@localhost:5432/tiktok?sslmode=disable"),
-		RedisAddr: get("REDIS_ADDR", "localhost:6379"),
-		JWTSecret: get("JWT_SECRET", "dev-secret-change-me"),
-		JWTExpiry: getDur("JWT_EXPIRY", 15*time.Minute),
-		BotAPIBase: get("BOT_API_BASE", "http://localhost:8081"),
-		BotToken:  get("BOT_TOKEN", ""),
-		FeedChID:  getInt64("FEED_CHAT_ID", 0),
+		Env:           get("APP_ENV", "dev"),
+		HTTPAddr:      ":" + get("HTTP_PORT", "8080"),
+		PGDSN:         get("PG_DSN", "postgres://tg:tg@localhost:5432/tiktok?sslmode=disable"),
+		RedisAddr:     get("REDIS_ADDR", "localhost:6379"),
+		JWTSecret:     get("JWT_SECRET", "dev-secret-change-me"),
+		JWTExpiry:     getDur("JWT_EXPIRY", 15*time.Minute),
+		BotAPIBase:    get("BOT_API_BASE", "http://localhost:8081"),
+		BotToken:      get("BOT_TOKEN", ""),
+		FeedChID:      getInt64("FEED_CHAT_ID", 0),
+		RelayPort:     get("RELAY_PORT", "8082"),
+		RelayCacheDir: get("RELAY_CACHE_DIR", "./media_cache"),
 	}
 }
 

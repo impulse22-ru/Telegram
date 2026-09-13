@@ -11,26 +11,40 @@ import (
 	"time"
 
 	"tgcloud/server/internal/config"
+	"tgcloud/server/internal/media"
+	"tgcloud/server/internal/store"
+	"tgcloud/server/internal/tgbot"
 )
 
 // relay — медиа-прокси стриминга (видео из Telegram CDN → клиент).
-// Этап 0-1: HTTP-сервер с заглушкой; наполнение — этап 3.
+// Этап 3: HTTP Range + дисковый кэш.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	cfg := config.Load()
-	addr := cfg.HTTPAddr
+
+	st, err := store.New(ctx, cfg.PGDSN, cfg.RedisAddr)
+	if err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	defer st.Close()
+
+	if cfg.BotToken == "" {
+		log.Fatalf("relay: BOT_TOKEN обязателен")
+	}
+	bot := tgbot.New(cfg.BotAPIBase, cfg.BotToken)
+
+	rl := media.New(store.NewRepos(st), bot, cfg.RelayCacheDir)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("relay ok"))
 	})
-	mux.HandleFunc("GET /media/stream/{video_id}", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "relay: not implemented (этап 3)", http.StatusNotImplemented)
-	})
+	mux.HandleFunc("GET /media/stream/{video_id}", media.RelayHandler(rl))
 
+	addr := ":" + cfg.RelayPort
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Printf("relay listening on %s", addr)

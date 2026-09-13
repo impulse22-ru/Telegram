@@ -107,6 +107,24 @@ func (c *Client) GetUpdates(req GetUpdatesReq) ([]Update, error) {
 	return out, err
 }
 
+// File — метаданные медиа из getFile.
+type File struct {
+	FileID   string `json:"file_id"`
+	FileSize int64  `json:"file_size"`
+	FilePath string `json:"file_path"`
+}
+
+func (c *Client) GetFile(fileID string) (*File, error) {
+	var out File
+	err := c.call("getFile", map[string]string{"file_id": fileID}, &out)
+	return &out, err
+}
+
+// FileURL — прямой (GET) URL файла локального Bot API: /file/bot<token>/<path>.
+func (c *Client) FileURL(f *File) string {
+	return fmt.Sprintf("%s/file/bot%s/%s", c.baseURL, c.token, f.FilePath)
+}
+
 type ExportInviteLinkReq struct {
 	ChatID int64 `json:"chat_id"`
 }
