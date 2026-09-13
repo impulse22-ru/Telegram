@@ -52,15 +52,32 @@ func (s *Server) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
-	ch, err := s.repos.Channels.GetByTgChatID(r.Context(), s.feedChannelID)
+	ctx := r.Context()
+	ch, err := s.repos.Channels.GetByTgChatID(ctx, s.feedChannelID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"videos": []store.Video{}})
 		return
 	}
-	videos, err := s.repos.Videos.VisibleFrom(r.Context(), ch.ID, 0, 50)
+	ids, err := s.repos.Feed.Top(ctx, ch.ID, 50)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db error")
+		writeErr(w, http.StatusInternalServerError, "feed error")
 		return
+	}
+	videos := make([]store.Video, 0, len(ids))
+	for _, id := range ids {
+		v, err := s.repos.Videos.Get(ctx, id)
+		if err != nil {
+			continue
+		}
+		videos = append(videos, *v)
+	}
+	// fallback: если Redis пуст (только что стартовали) — из БД.
+	if len(videos) == 0 {
+		videos, err = s.repos.Videos.VisibleFrom(ctx, ch.ID, 0, 50)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "db error")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"videos": videos})
 }
@@ -76,5 +93,25 @@ func (s *Server) handleVideoGet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, video)
+	likes, err := s.repos.Engagements.CountLikes(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	views, err := s.repos.Engagements.CountViews(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	claims := claimsFrom(r.Context())
+	liked := false
+	if claims != nil {
+		liked, _ = s.repos.Engagements.IsLiked(r.Context(), claims.UserID, id)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"video": video,
+		"likes": likes,
+		"views": views,
+		"liked": liked,
+	})
 }

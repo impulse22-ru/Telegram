@@ -31,6 +31,7 @@ docker compose up -d postgres redis
 
 # 2. Миграции
 psql "postgres://tg:tg@localhost:5432/tiktok" -f migrations/0001_init.sql
+psql "postgres://tg:tg@localhost:5432/tiktok" -f migrations/0002_reports.sql
 
 # 3. Сервер
 go run ./cmd/api          # API на :8080
@@ -62,7 +63,7 @@ curl localhost:8080/v1/feed -H 'Authorization: Bearer <TOKEN>'
 
 - [x] Этап 0: docker-compose (PG, Redis, локальный Bot API), конфиг, каркас
 - [x] Этап 1: бот-индексация канала (worker), автодобавление пользователей в канал
-- [ ] Этап 2: API (like, comment, report), лента на Redis ZSET
+- [x] Этап 2: API (like, unlike, comment, report, view), лента на Redis ZSET
 - [ ] Этап 3: медиа-релей (HTTP Range, кэш)
 - [ ] Этап 4: клиент — экран ленты + автоплей (форк)
 - [ ] Этап 5: кастомные команды бота, фильтрация, мониторинг

@@ -65,4 +65,18 @@ func (r *videosRepo) Get(ctx context.Context, id int64) (*Video, error) {
 	return &v, nil
 }
 
+func (r *videosRepo) GetByTgMsg(ctx context.Context, channelID, tgMsgID int64) (*Video, error) {
+	var v Video
+	err := r.pg.QueryRow(ctx, `
+		SELECT id, tg_msg_id, file_id, COALESCE(caption,''), COALESCE(duration_ms,0),
+		       COALESCE(width,0), COALESCE(height,0), COALESCE(title,''), tags, status, channel_id, posted_at
+		FROM videos WHERE channel_id=$1 AND tg_msg_id=$2`, channelID, tgMsgID).
+		Scan(&v.ID, &v.TgMsgID, &v.FileID, &v.Caption, &v.DurationMs,
+			&v.Width, &v.Height, &v.Title, &v.Tags, &v.Status, &v.ChannelID, &v.PostedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
 var _ Videos = (*videosRepo)(nil)

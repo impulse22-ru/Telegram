@@ -18,6 +18,7 @@ type Indexer struct {
 	feedChat int64          // tg_chat_id закрытого канала
 	channels store.Channels
 	videos   store.Videos
+	feed     store.Feed
 }
 
 func New(bot *tgbot.Client, repos *store.Repos, feedChat int64) *Indexer {
@@ -26,6 +27,7 @@ func New(bot *tgbot.Client, repos *store.Repos, feedChat int64) *Indexer {
 		feedChat: feedChat,
 		channels: repos.Channels,
 		videos:   repos.Videos,
+		feed:     repos.Feed,
 	}
 }
 
@@ -77,7 +79,14 @@ func (ix *Indexer) indexVideo(ctx context.Context, m *tgbot.Message) error {
 		ChannelID:  channelID,
 		PostedAt:   time.Unix(m.Date, 0),
 	}
-	return ix.videos.Insert(ctx, v)
+	if err := ix.videos.Insert(ctx, v); err != nil {
+		return err
+	}
+	// Публикуем в ленту Redis (score = posted_at unix).
+	if vid, err := ix.videos.GetByTgMsg(ctx, channelID, m.MessageID); err == nil {
+		return ix.feed.AddVideo(ctx, channelID, vid.ID, float64(m.Date))
+	}
+	return nil
 }
 
 func (ix *Indexer) approveJoin(ctx context.Context, r *tgbot.ChatJoinRequest) error {

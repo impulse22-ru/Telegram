@@ -74,6 +74,24 @@ type Order struct {
 	ContactDetails string `json:"contact_details"`
 }
 
+type Comment struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	VideoID   int64     `json:"video_id"`
+	Text      string    `json:"text"`
+	ParentID  int64     `json:"parent_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Report struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	VideoID   int64     `json:"video_id"`
+	Reason    string    `json:"reason"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // --- Репозитории (интерфейсы + реализация на pgxpool) ---
 
 type Channels interface {
@@ -90,6 +108,7 @@ type Users interface {
 type Videos interface {
 	Insert(ctx context.Context, v Video) error
 	VisibleFrom(ctx context.Context, channelID, after, limit int64) ([]Video, error)
+	GetByTgMsg(ctx context.Context, channelID, tgMsgID int64) (*Video, error)
 	Ban(ctx context.Context, id int64) error
 	Get(ctx context.Context, id int64) (*Video, error)
 }
@@ -115,22 +134,44 @@ type Orders interface {
 	SetStatus(ctx context.Context, id int64, status string) error
 }
 
+type Engagements interface {
+	Like(ctx context.Context, userID, videoID int64) error
+	Unlike(ctx context.Context, userID, videoID int64) error
+	IsLiked(ctx context.Context, userID, videoID int64) (bool, error)
+	CountLikes(ctx context.Context, videoID int64) (int64, error)
+	Comment(ctx context.Context, userID, videoID int64, text string, parentID int64) (int64, error)
+	Comments(ctx context.Context, videoID int64, limit int64) ([]Comment, error)
+	Report(ctx context.Context, userID, videoID int64, reason string) error
+	RecordView(ctx context.Context, userID, videoID int64, watchSeconds int) error
+	CountViews(ctx context.Context, videoID int64) (int64, error)
+}
+
+type Feed interface {
+	AddVideo(ctx context.Context, channelID, videoID int64, score float64) error
+	Top(ctx context.Context, channelID, n int64) ([]int64, error)
+	RemoveVideo(ctx context.Context, channelID, videoID int64) error
+}
+
 type Repos struct {
-	Channels Channels
-	Users    Users
-	Videos   Videos
-	Shops    Shops
-	Products Products
-	Orders   Orders
+	Channels    Channels
+	Users       Users
+	Videos      Videos
+	Shops       Shops
+	Products    Products
+	Orders      Orders
+	Engagements Engagements
+	Feed        Feed
 }
 
 func NewRepos(s *Store) *Repos {
 	return &Repos{
-		Channels: &channelsRepo{pg: s.PG},
-		Users:    &usersRepo{pg: s.PG},
-		Videos:   &videosRepo{pg: s.PG},
-		Shops:    &shopsRepo{pg: s.PG},
-		Products: &productsRepo{pg: s.PG},
-		Orders:   &ordersRepo{pg: s.PG},
+		Channels:    &channelsRepo{pg: s.PG},
+		Users:       &usersRepo{pg: s.PG},
+		Videos:      &videosRepo{pg: s.PG},
+		Shops:       &shopsRepo{pg: s.PG},
+		Products:    &productsRepo{pg: s.PG},
+		Orders:      &ordersRepo{pg: s.PG},
+		Engagements: &engagementsRepo{pg: s.PG},
+		Feed:        &feedRepo{rdb: s.Redis},
 	}
 }

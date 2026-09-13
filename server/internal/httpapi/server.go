@@ -28,6 +28,12 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /v1/feed", s.authMW(s.handleFeed))
 	mux.HandleFunc("GET /v1/videos/{id}", s.authMW(s.handleVideoGet))
+	mux.HandleFunc("POST /v1/videos/{id}/like", s.authMW(s.handleLike))
+	mux.HandleFunc("POST /v1/videos/{id}/unlike", s.authMW(s.handleUnlike))
+	mux.HandleFunc("GET /v1/videos/{id}/comments", s.authMW(s.handleCommentsList))
+	mux.HandleFunc("POST /v1/videos/{id}/comment", s.authMW(s.handleComment))
+	mux.HandleFunc("POST /v1/videos/{id}/report", s.authMW(s.handleReport))
+	mux.HandleFunc("POST /v1/videos/{id}/view", s.authMW(s.handleView))
 	mux.HandleFunc("POST /v1/join", s.authMW(s.handleJoin))
 
 	mux.HandleFunc("POST /v1/shop", s.authMW(s.handleShopCreate))
