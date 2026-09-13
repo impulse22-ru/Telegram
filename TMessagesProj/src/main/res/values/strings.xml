@@ -11221,4 +11221,10 @@
     <string name="UnsupportedMessageTitle">Unsupported Message</string>
     <string name="UnsupportedMessageMessage">Update Telegram to view this message</string>
     <string name="UnsupportedUpdate">Update</string>
+    <string name="MediaFeed">Media Feed</string>
+    <string name="MediaFeedEmpty">No videos yet</string>
+    <string name="MediaFeedError">Failed to load feed</string>
+    <string name="AddCommentHint">Add a comment\u2026</string>
+    <string name="ReportReasonHint">Reason for report</string>
+    <string name="MediaFeedReportTitle">Report video</string>
 </resources>

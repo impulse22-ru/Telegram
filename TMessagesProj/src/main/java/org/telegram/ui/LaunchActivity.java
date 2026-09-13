@@ -2272,6 +2272,11 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                 }
                                 case "tg": {
                                     String url = data.toString();
+                                    if (url.startsWith("tg:feed") || url.startsWith("tg://feed")) {
+                                        Intent feedIntent = new Intent(LaunchActivity.this, MediaFeedActivity.class);
+                                        startActivity(feedIntent);
+                                        return true;
+                                    }
                                     if (url.startsWith("tg:premium_offer") || url.startsWith("tg://premium_offer")) {
                                         String finalUrl = url;
                                         AndroidUtilities.runOnUIThread(() -> {
