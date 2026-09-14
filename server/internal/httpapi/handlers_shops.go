@@ -200,8 +200,72 @@ func (s *Server) handleOrderConfirm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	// Фиксируем канал связи между участниками заказа.
+	if shop.TgChatID > 0 {
+		_, _ = s.repos.Orders.SetChatLink(r.Context(), id, shop.TgChatID)
+	}
 	s.notifyOrder(r.Context(), order, "confirmed")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "confirmed"})
+}
+
+// GET /v1/order/{id}/chat — канал связи заказа (покупатель↔продавец).
+func (s *Server) handleOrderChat(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	order, err := s.repos.Orders.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), order.ShopID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if order.BuyerID != claims.UserID && shop.OwnerID != claims.UserID && claims.Role != "admin" {
+		writeErr(w, http.StatusForbidden, "no access")
+		return
+	}
+
+	tgChatID, exists, err := s.repos.Orders.GetChatLink(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if !exists && shop.TgChatID > 0 {
+		tgChatID = shop.TgChatID
+		exists = true
+	}
+
+	// Партнёр для диалога: покупатель видит продавца, продавец — покупателя.
+	peerID := order.BuyerID
+	peerName := "покупатель"
+	if claims.UserID == order.BuyerID {
+		peerID = shop.OwnerID
+		peerName = "продавец"
+	}
+	peer, err := s.repos.Users.Get(r.Context(), peerID)
+	peerTgID := int64(0)
+	peerDisplay := peerName
+	if err == nil {
+		peerTgID = peer.TgUserID
+		if peer.Name != "" {
+			peerDisplay = peer.Name
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tg_chat_id":   tgChatID,
+		"has_chat":     exists,
+		"peer_role":    peerName,
+		"peer_name":    peerDisplay,
+		"peer_tg_id":   peerTgID,
+		"payment_info": shop.PaymentInfo,
+		"status":       order.PaymentStatus,
+	})
 }
 
 func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {

@@ -84,6 +84,23 @@ func (r *statsRepo) countLikes(ctx context.Context, videoID int64) (int64, error
 	return n, err
 }
 
+// UserStats — персональная статистика пользователя.
+func (r *statsRepo) UserStats(ctx context.Context, userID int64) (*UserStats, error) {
+	var s UserStats
+	err := r.pg.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM views_log WHERE user_id=$1),
+			(SELECT COALESCE(sum(watch_seconds),0)::bigint FROM views_log WHERE user_id=$1),
+			(SELECT count(*) FROM likes WHERE user_id=$1),
+			(SELECT count(*) FROM comments WHERE user_id=$1),
+			(SELECT count(*) FROM subscriptions WHERE user_id=$1)`,
+		userID).Scan(&s.Views, &s.WatchSeconds, &s.LikesGiven, &s.CommentsGiven, &s.Subscriptions)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // AdminStats — общий дашборд.
 func (r *statsRepo) AdminStats(ctx context.Context) (*AdminStats, error) {
 	var s AdminStats

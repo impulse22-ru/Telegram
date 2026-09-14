@@ -37,6 +37,8 @@ public class MediaFeedActivity extends Activity {
     private FeedAdapter adapter;
     private final int currentAccount = UserConfig.selectedAccount;
     private boolean destroyed;
+    private long feedOffset;
+    private boolean feedLoading;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,6 +66,18 @@ public class MediaFeedActivity extends Activity {
             public void onScrollStateChanged(@NonNull RecyclerView rv, int state) {
                 if (state == RecyclerView.SCROLL_STATE_IDLE) {
                     updateActivePosition(rv);
+                }
+            }
+
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                RecyclerView.LayoutManager lm = rv.getLayoutManager();
+                if (lm instanceof LinearLayoutManager) {
+                    LinearLayoutManager llm = (LinearLayoutManager) lm;
+                    int last = llm.findLastVisibleItemPosition();
+                    if (last >= adapter.getItemCount() - 3 && !feedLoading) {
+                        loadMore();
+                    }
                 }
             }
         });
@@ -106,6 +120,20 @@ public class MediaFeedActivity extends Activity {
     }
 
     private void loadFeed(Runnable onDone) {
+        feedOffset = 0;
+        loadPage(true, onDone);
+    }
+
+    private void loadMore() {
+        loadPage(false, null);
+    }
+
+    private void loadPage(final boolean first, final Runnable onDone) {
+        if (feedLoading) {
+            return;
+        }
+        feedLoading = true;
+        final long offset = feedOffset;
         Utilities.stageQueue.postRunnable(() -> {
             try {
                 MediaFeedServerApi api = MediaFeedServerApi.getInstance();
@@ -115,24 +143,33 @@ public class MediaFeedActivity extends Activity {
                 String phone = user != null ? user.phone : null;
                 String name = user != null ? user.first_name : null;
                 api.auth(userId, phone, name);
-                JSONArray videos = api.feed();
+                JSONArray videos = api.feed(offset, 20);
                 AndroidUtilities.runOnUIThread(() -> {
+                    feedLoading = false;
                     if (destroyed) {
                         return;
                     }
                     if (adapter != null) {
-                        adapter.setVideos(videos);
+                        if (first) {
+                            adapter.setVideos(videos);
+                        } else {
+                            adapter.addVideos(videos);
+                        }
                     }
+                    feedOffset = offset + videos.length();
                     if (onDone != null) {
                         onDone.run();
                     }
                 });
             } catch (Exception ignore) {
                 AndroidUtilities.runOnUIThread(() -> {
+                    feedLoading = false;
                     if (onDone != null) {
                         onDone.run();
                     }
-                    AndroidUtilities.shakeView(getWindow().getDecorView());
+                    if (first) {
+                        AndroidUtilities.shakeView(getWindow().getDecorView());
+                    }
                 });
             }
         });
@@ -167,19 +204,8 @@ public class MediaFeedActivity extends Activity {
             items.clear();
             if (videos != null) {
                 for (int i = 0; i < videos.length(); i++) {
-                    JSONObject o = videos.optJSONObject(i);
-                    if (o == null) {
-                        continue;
-                    }
-                    VideoItem v = new VideoItem();
-                    v.id = o.optLong("id");
-                    v.fileId = o.optString("file_id");
-                    v.caption = o.optString("caption");
-                    v.title = o.optString("title");
-                    v.width = o.optInt("width");
-                    v.height = o.optInt("height");
-                    v.durationMs = o.optLong("duration_ms");
-                    if (v.id != 0) {
+                    VideoItem v = parseVideo(videos.optJSONObject(i));
+                    if (v != null) {
                         items.add(v);
                     }
                 }
@@ -188,6 +214,33 @@ public class MediaFeedActivity extends Activity {
             if (active < 0 && !items.isEmpty()) {
                 setActivePosition(0);
             }
+        }
+
+        void addVideos(JSONArray videos) {
+            if (videos != null) {
+                for (int i = 0; i < videos.length(); i++) {
+                    VideoItem v = parseVideo(videos.optJSONObject(i));
+                    if (v != null) {
+                        items.add(v);
+                    }
+                }
+            }
+            notifyDataSetChanged();
+        }
+
+        private VideoItem parseVideo(JSONObject o) {
+            if (o == null) {
+                return null;
+            }
+            VideoItem v = new VideoItem();
+            v.id = o.optLong("id");
+            v.fileId = o.optString("file_id");
+            v.caption = o.optString("caption");
+            v.title = o.optString("title");
+            v.width = o.optInt("width");
+            v.height = o.optInt("height");
+            v.durationMs = o.optLong("duration_ms");
+            return v.id != 0 ? v : null;
         }
 
         void setActivePosition(int position) {
@@ -425,15 +478,23 @@ public class MediaFeedActivity extends Activity {
 
     private void openCommentDialog(final long videoId) {
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        final LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        final android.widget.TextView list = new android.widget.TextView(this);
+        list.setTextSize(14f);
+        list.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        list.setPadding(AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4));
+        content.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
         final EditText editText = new EditText(this);
         editText.setHint(getString(R.string.AddCommentHint));
         editText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         editText.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
-        editText.setSingleLine(false);
-        FrameLayout frame = new FrameLayout(this);
-        frame.addView(editText, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER, 16, 16, 16, 16));
-        builder.setTitle(getString(R.string.MediaFeed));
-        builder.setView(frame);
+        content.addView(editText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        builder.setTitle(getString(R.string.MediaFeedComments));
+        builder.setView(content);
         builder.setPositiveButton(getString(R.string.Send), (dialog, which) -> {
             final String text = editText.getText().toString();
             Utilities.stageQueue.postRunnable(() -> {
@@ -444,6 +505,26 @@ public class MediaFeedActivity extends Activity {
             });
         });
         builder.setNegativeButton(getString(R.string.Cancel), null);
+
+        Utilities.stageQueue.postRunnable(() -> {
+            final StringBuilder sb = new StringBuilder();
+            try {
+                JSONArray comments = MediaFeedServerApi.getInstance().comments(videoId);
+                for (int i = 0; i < comments.length(); i++) {
+                    JSONObject c = comments.optJSONObject(i);
+                    if (c == null) {
+                        continue;
+                    }
+                    long uid = c.optLong("user_id");
+                    String text = c.optString("text");
+                    sb.append("#").append(uid).append(": ").append(text).append("\n");
+                }
+            } catch (Exception ignore) {
+            }
+            final String text = sb.length() == 0 ? getString(R.string.MediaFeedNoComments) : sb.toString();
+            AndroidUtilities.runOnUIThread(() -> list.setText(text));
+        });
+
         builder.show();
     }
 

@@ -89,8 +89,17 @@ public class MediaFeedServerApi {
     }
 
     public JSONArray feed() throws Exception {
-        JSONObject resp = request("GET", "/v1/feed", null, token);
+        return feed(0, 20);
+    }
+
+    public JSONArray feed(long offset, long limit) throws Exception {
+        JSONObject resp = request("GET", "/v1/feed?offset=" + offset + "&limit=" + limit, null, token);
         return resp.optJSONArray("videos");
+    }
+
+    public boolean hasMore(long offset, long limit) throws Exception {
+        JSONObject resp = request("GET", "/v1/feed?offset=" + offset + "&limit=" + limit, null, token);
+        return resp.optBoolean("has_more", false);
     }
 
     public void like(long videoId) throws Exception {
@@ -107,6 +116,11 @@ public class MediaFeedServerApi {
         request("POST", "/v1/videos/" + videoId + "/comment", body, token);
     }
 
+    public JSONArray comments(long videoId) throws Exception {
+        JSONObject resp = request("GET", "/v1/videos/" + videoId + "/comments", null, token);
+        return resp.optJSONArray("comments");
+    }
+
     public void report(long videoId, String reason) throws Exception {
         JSONObject body = new JSONObject();
         body.put("reason", reason);
@@ -115,6 +129,134 @@ public class MediaFeedServerApi {
 
     public void view(long videoId) throws Exception {
         request("POST", "/v1/videos/" + videoId + "/view", new JSONObject(), token);
+    }
+
+    // --- Магазины и товары (этап 6) ---
+
+    public JSONArray catalog() throws Exception {
+        JSONObject resp = request("GET", "/v1/catalog", null, token);
+        return resp.optJSONArray("items");
+    }
+
+    public JSONArray shops() throws Exception {
+        JSONObject resp = request("GET", "/v1/shops", null, token);
+        return resp.optJSONArray("shops");
+    }
+
+    public JSONArray myShops() throws Exception {
+        JSONObject resp = request("GET", "/v1/shops/me", null, token);
+        return resp.optJSONArray("shops");
+    }
+
+    public JSONObject shop(int shopId) throws Exception {
+        return request("GET", "/v1/shop/" + shopId, null, token);
+    }
+
+    public JSONObject createShop(long tgChatId, String title, String description, String paymentInfo) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("tg_chat_id", tgChatId);
+        body.put("title", title);
+        if (description != null) body.put("description", description);
+        if (paymentInfo != null) body.put("payment_info", paymentInfo);
+        return request("POST", "/v1/shop", body, token);
+    }
+
+    public JSONObject createShopAuto(String title, String description, String paymentInfo) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("title", title);
+        if (description != null) body.put("description", description);
+        if (paymentInfo != null) body.put("payment_info", paymentInfo);
+        return request("POST", "/v1/shop", body, token);
+    }
+
+    public void subscribe(int shopId) throws Exception {
+        request("POST", "/v1/shops/" + shopId + "/subscribe", new JSONObject(), token);
+    }
+
+    public void unsubscribe(int shopId) throws Exception {
+        request("DELETE", "/v1/shops/" + shopId + "/subscribe", null, token);
+    }
+
+    public JSONArray mySubscriptions() throws Exception {
+        JSONObject resp = request("GET", "/v1/me/subscriptions", null, token);
+        return resp.optJSONArray("channel_ids");
+    }
+
+    public JSONObject product(int productId) throws Exception {
+        return request("GET", "/v1/product/" + productId, null, token);
+    }
+
+    public void productView(int productId) throws Exception {
+        request("POST", "/v1/product/" + productId + "/view", new JSONObject(), token);
+    }
+
+    // --- Заказы (этап 7) ---
+
+    public JSONObject createOrder(int productId, int quantity, double price, String contact) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("product_id", productId);
+        body.put("quantity", quantity);
+        body.put("price_amount", price);
+        body.put("contact_details", contact);
+        return request("POST", "/v1/order", body, token);
+    }
+
+    public JSONObject order(int orderId) throws Exception {
+        return request("GET", "/v1/order/" + orderId, null, token);
+    }
+
+    public JSONObject orderChat(int orderId) throws Exception {
+        return request("GET", "/v1/order/" + orderId + "/chat", null, token);
+    }
+
+    public JSONObject payOrder(int orderId) throws Exception {
+        return request("POST", "/v1/order/" + orderId + "/pay", new JSONObject(), token);
+    }
+
+    public JSONObject cancelOrder(int orderId) throws Exception {
+        return request("POST", "/v1/order/" + orderId + "/cancel", new JSONObject(), token);
+    }
+
+    public JSONObject confirmOrder(int orderId) throws Exception {
+        return request("POST", "/v1/order/" + orderId + "/confirm", new JSONObject(), token);
+    }
+
+    public JSONArray myOrders() throws Exception {
+        JSONObject resp = request("GET", "/v1/orders/me", null, token);
+        return resp.optJSONArray("orders");
+    }
+
+    public JSONArray sellerOrders() throws Exception {
+        JSONObject resp = request("GET", "/v1/orders/seller", null, token);
+        return resp.optJSONArray("orders");
+    }
+
+    public JSONObject myStats() throws Exception {
+        return request("GET", "/v1/stats/me", null, token);
+    }
+
+    public JSONObject salesStats() throws Exception {
+        return request("GET", "/v1/stats/sales", null, token);
+    }
+
+    // --- Админ (этап 3) ---
+
+    public JSONObject adminStats() throws Exception {
+        return request("GET", "/v1/admin/stats", null, token);
+    }
+
+    public JSONArray adminTop() throws Exception {
+        JSONObject resp = request("GET", "/v1/admin/top", null, token);
+        return resp.optJSONArray("top");
+    }
+
+    public JSONArray adminReports() throws Exception {
+        JSONObject resp = request("GET", "/v1/admin/reports", null, token);
+        return resp.optJSONArray("reports");
+    }
+
+    public void adminBanVideo(int videoId) throws Exception {
+        request("POST", "/v1/admin/videos/" + videoId + "/ban", new JSONObject(), token);
     }
 
     private JSONObject request(String method, String path, JSONObject body, String bearer) throws Exception {

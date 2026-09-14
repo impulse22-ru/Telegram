@@ -2277,6 +2277,16 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                         startActivity(feedIntent);
                                         return true;
                                     }
+                                    if (url.startsWith("tg:catalog") || url.startsWith("tg://catalog")) {
+                                        Intent catalogIntent = new Intent(LaunchActivity.this, MediaCatalogActivity.class);
+                                        startActivity(catalogIntent);
+                                        return true;
+                                    }
+                                    if (url.startsWith("tg:admin") || url.startsWith("tg://admin")) {
+                                        Intent adminIntent = new Intent(LaunchActivity.this, MediaAdminActivity.class);
+                                        startActivity(adminIntent);
+                                        return true;
+                                    }
                                     if (url.startsWith("tg:premium_offer") || url.startsWith("tg://premium_offer")) {
                                         String finalUrl = url;
                                         AndroidUtilities.runOnUIThread(() -> {

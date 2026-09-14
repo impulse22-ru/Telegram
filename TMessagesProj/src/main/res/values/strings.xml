@@ -11227,4 +11227,20 @@
     <string name="AddCommentHint">Add a comment\u2026</string>
     <string name="ReportReasonHint">Reason for report</string>
     <string name="MediaFeedReportTitle">Report video</string>
+    <string name="MediaFeedComments">Comments</string>
+    <string name="MediaFeedNoComments">No comments yet</string>
+    <string name="MediaFeedSubscribe">Subscribe</string>
+    <string name="MediaFeedUnsubscribe">Unsubscribe</string>
+    <string name="MediaFeedSubscribed">Subscribed</string>
+    <string name="MediaFeedBuy">Buy</string>
+    <string name="MediaFeedOrders">Orders</string>
+    <string name="MediaFeedMyOrders">My orders</string>
+    <string name="MediaFeedSellerOrders">My sales</string>
+    <string name="MediaFeedProductPrice">Price</string>
+    <string name="MediaFeedContact">Contact details</string>
+    <string name="MediaFeedChat">Chat</string>
+    <string name="MediaFeedPaid">I paid</string>
+    <string name="MediaFeedConfirm">Confirm</string>
+    <string name="MediaFeedCancel">Cancel order</string>
+    <string name="MediaFeedStatsMe">My stats</string>
 </resources>

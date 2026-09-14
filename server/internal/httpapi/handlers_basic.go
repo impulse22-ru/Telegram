@@ -55,13 +55,29 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ch, err := s.repos.Channels.GetByTgChatID(ctx, s.feedChannelID)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"videos": []store.Video{}})
+		writeJSON(w, http.StatusOK, map[string]any{"videos": []store.Video{}, "has_more": false})
 		return
 	}
-	ids, err := s.repos.Feed.Top(ctx, ch.ID, 50)
+	offset, _ := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
+	limit := int64(20)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if l, err := strconv.ParseInt(v, 10, 64); err == nil && l > 0 && l <= 50 {
+			limit = l
+		}
+	}
+
+	// Скоринговая пагинированная лента; фолбэк на время, если скоринг пуст.
+	ids, err := s.repos.Feed.ScoredFeed(ctx, ch.ID, offset, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "feed error")
 		return
+	}
+	if len(ids) == 0 {
+		ids, err = s.repos.Feed.Top(ctx, ch.ID, limit)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "feed error")
+			return
+		}
 	}
 	videos := make([]store.Video, 0, len(ids))
 	for _, id := range ids {
@@ -71,15 +87,8 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		}
 		videos = append(videos, *v)
 	}
-	// fallback: если Redis пуст (только что стартовали) — из БД.
-	if len(videos) == 0 {
-		videos, err = s.repos.Videos.VisibleFrom(ctx, ch.ID, 0, 50)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "db error")
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"videos": videos})
+	hasMore := len(videos) == int(limit)
+	writeJSON(w, http.StatusOK, map[string]any{"videos": videos, "has_more": hasMore, "offset": offset + int64(len(videos))})
 }
 
 func (s *Server) handleVideoGet(w http.ResponseWriter, r *http.Request) {

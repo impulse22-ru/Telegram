@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -248,6 +250,30 @@ func (r *ordersRepo) list(ctx context.Context, sql string, arg int64) ([]Order, 
 func (r *ordersRepo) SetStatus(ctx context.Context, id int64, status string) error {
 	_, err := r.pg.Exec(ctx, `UPDATE orders SET payment_status=$2, updated_at=now() WHERE id=$1`, id, status)
 	return err
+}
+
+// SetChatLink создаёт/обновляет запись order_chat_link для заказа.
+func (r *ordersRepo) SetChatLink(ctx context.Context, orderID, tgChatID int64) (int64, error) {
+	var id int64
+	err := r.pg.QueryRow(ctx, `
+		INSERT INTO order_chat_link (order_id, tg_chat_id)
+		VALUES ($1,$2)
+		ON CONFLICT (order_id) DO UPDATE SET tg_chat_id=EXCLUDED.tg_chat_id
+		RETURNING id`, orderID, tgChatID).Scan(&id)
+	return id, err
+}
+
+// GetChatLink возвращает (tg_chat_id, exists, error) для заказа.
+func (r *ordersRepo) GetChatLink(ctx context.Context, orderID int64) (int64, bool, error) {
+	var chatID int64
+	err := r.pg.QueryRow(ctx, `SELECT tg_chat_id FROM order_chat_link WHERE order_id=$1`, orderID).Scan(&chatID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return chatID, true, nil
 }
 
 var _ Orders = (*ordersRepo)(nil)

@@ -144,6 +144,15 @@ type ProductStat struct {
 	Revenue   float64 `json:"revenue"`
 }
 
+// UserStats — персональная статистика пользователя (/v1/stats/me).
+type UserStats struct {
+	Views         int64   `json:"views"`
+	WatchSeconds  int64   `json:"watch_seconds"`
+	LikesGiven    int64   `json:"likes_given"`
+	CommentsGiven int64   `json:"comments_given"`
+	Subscriptions int64   `json:"subscriptions"`
+}
+
 // --- Репозитории (интерфейсы + реализация на pgxpool) ---
 
 type Channels interface {
@@ -194,6 +203,8 @@ type Orders interface {
 	ByBuyer(ctx context.Context, buyerID int64) ([]Order, error)
 	ByShop(ctx context.Context, shopID int64) ([]Order, error)
 	SetStatus(ctx context.Context, id int64, status string) error
+	SetChatLink(ctx context.Context, orderID, tgChatID int64) (int64, error)
+	GetChatLink(ctx context.Context, orderID int64) (int64, bool, error)
 }
 
 type Engagements interface {
@@ -213,6 +224,7 @@ type Engagements interface {
 type Feed interface {
 	AddVideo(ctx context.Context, channelID, videoID int64, score float64) error
 	Top(ctx context.Context, channelID, n int64) ([]int64, error)
+	ScoredFeed(ctx context.Context, channelID, offset, limit int64) ([]int64, error)
 	RemoveVideo(ctx context.Context, channelID, videoID int64) error
 }
 
@@ -222,6 +234,7 @@ type Stats interface {
 	TopVideos(ctx context.Context, limit int64) ([]VideoStat, error)
 	AdminStats(ctx context.Context) (*AdminStats, error)
 	SellerStats(ctx context.Context, ownerID int64) (*SellerStats, error)
+	UserStats(ctx context.Context, userID int64) (*UserStats, error)
 }
 
 type Subscriptions interface {
@@ -260,7 +273,7 @@ func NewRepos(s *Store) *Repos {
 		Products:      &productsRepo{pg: s.PG},
 		Orders:        &ordersRepo{pg: s.PG},
 		Engagements:   &engagementsRepo{pg: s.PG},
-		Feed:          &feedRepo{rdb: s.Redis},
+		Feed:          &feedRepo{rdb: s.Redis, pg: s.PG},
 		Stats:         &statsRepo{pg: s.PG},
 		Subscriptions: &subscriptionsRepo{pg: s.PG},
 		Filter:        &filterRepo{pg: s.PG},

@@ -34,7 +34,17 @@ func (s *Server) handleVideoStats(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/stats/me — статистика моих просмотров/лайков.
 func (s *Server) handleMyStats(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	claims := claimsFrom(r.Context())
+	if claims == nil {
+		writeErr(w, http.StatusUnauthorized, "no auth")
+		return
+	}
+	st, err := s.repos.Stats.UserStats(r.Context(), claims.UserID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 // GET /v1/admin/stats — общий дашборд.
