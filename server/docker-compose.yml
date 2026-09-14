@@ -47,7 +47,85 @@ services:
       - botapi:/var/lib/telegram-bot-api
     command: --local --http-port=8081 --dir=/var/lib/telegram-bot-api
 
+  migrate:
+    image: postgres:16-alpine
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: tg
+      PGDATABASE: tiktok
+      PGHOST: postgres
+      PGUSER: tg
+    entrypoint: ["sh","-c","sleep 1 && for f in /migrations/*.sql; do echo Applying $$f; psql -f $$f; done"]
+    volumes:
+      - ./migrations:/migrations
+
+  api:
+    build:
+      context: .
+      target: runtime
+    command: [ "api" ]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      HTTP_PORT: "8080"
+      PG_DSN: postgres://tg:tg@postgres:5432/tiktok?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      BOT_API_BASE: http://bot-api:8081
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
+    ports:
+      - "8080:8080"
+    volumes:
+      - appdata:/data
+
+  relay:
+    build:
+      context: .
+      target: runtime
+    command: [ "relay" ]
+    restart: unless-stopped
+    environment:
+      RELAY_PORT: "8082"
+      RELAY_CACHE_DIR: /data/media_cache
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
+      BOT_API_BASE: http://bot-api:8081
+    ports:
+      - "8082:8082"
+    volumes:
+      - appdata:/data
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    command: [ "worker" ]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      PG_DSN: postgres://tg:tg@postgres:5432/tiktok?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      BOT_API_BASE: http://bot-api:8081
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
+      FEED_CHAT_ID: ${FEED_CHAT_ID:?set FEED_CHAT_ID}
+
 volumes:
   pgdata:
   redisdata:
   botapi:
+  appdata:

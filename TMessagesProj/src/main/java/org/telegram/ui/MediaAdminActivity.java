@@ -6,6 +6,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -49,6 +50,7 @@ public class MediaAdminActivity extends Activity {
         statsView.setTextSize(14f);
         statsView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         statsView.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
+        statsView.setOnClickListener(v -> manageFilterWords());
         root.addView(statsView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         list = new RecyclerView(this);
@@ -66,12 +68,13 @@ public class MediaAdminActivity extends Activity {
                 JSONObject stats = MediaFeedServerApi.getInstance().adminStats();
                 JSONArray top = MediaFeedServerApi.getInstance().adminTop();
                 JSONArray reports = MediaFeedServerApi.getInstance().adminReports();
+                JSONArray shops = MediaFeedServerApi.getInstance().shops();
                 AndroidUtilities.runOnUIThread(() -> {
                     if (destroyed) {
                         return;
                     }
                     statsView.setText(describe(stats));
-                    adapter.set(top, reports);
+                    adapter.set(top, reports, shops);
                     loading.setVisibility(View.GONE);
                 });
             } catch (Exception e) {
@@ -87,7 +90,7 @@ public class MediaAdminActivity extends Activity {
 
     private String describe(JSONObject s) {
         StringBuilder sb = new StringBuilder();
-        sb.append("👑 Admin\n");
+        sb.append("👑 Admin  (tap = filter words)\n");
         sb.append("users: ").append(s.optLong("users")).append("\n");
         sb.append("videos: ").append(s.optLong("videos")).append("\n");
         sb.append("shops: ").append(s.optLong("shops")).append("\n");
@@ -96,11 +99,77 @@ public class MediaAdminActivity extends Activity {
         return sb.toString();
     }
 
+    private void manageFilterWords() {
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        final LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
+
+        final TextView wordsList = new TextView(this);
+        wordsList.setTextSize(14f);
+        wordsList.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        content.addView(wordsList, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        final EditText newWord = new EditText(this);
+        newWord.setHint("new word");
+        newWord.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        newWord.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+        content.addView(newWord, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        builder.setTitle("Фильтр-слова");
+        builder.setView(content);
+        builder.setPositiveButton("Добавить", (dialog, which) -> {
+            String word = newWord.getText().toString().trim();
+            if (word.isEmpty()) return;
+            Utilities.stageQueue.postRunnable(() -> {
+                try {
+                    MediaFeedServerApi.getInstance().adminFilterWordAdd(word);
+                } catch (Exception ignore) {
+                }
+                refresh();
+            });
+        });
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        builder.show();
+
+        Utilities.stageQueue.postRunnable(() -> {
+            final StringBuilder sb = new StringBuilder();
+            try {
+                JSONArray words = MediaFeedServerApi.getInstance().adminFilterWords();
+                for (int i = 0; i < words.length(); i++) {
+                    String w = words.optString(i);
+                    if (w.length() == 0 && !words.isNull(i)) continue;
+                    sb.append("• ").append(w).append("\n");
+                }
+            } catch (Exception ignore) {
+            }
+            final String text = sb.length() == 0 ? "(empty)" : sb.toString();
+            AndroidUtilities.runOnUIThread(() -> wordsList.setText(text));
+        });
+    }
+
+    private void refresh() {
+        Utilities.stageQueue.postRunnable(() -> {
+            try {
+                JSONObject stats = MediaFeedServerApi.getInstance().adminStats();
+                JSONArray top = MediaFeedServerApi.getInstance().adminTop();
+                JSONArray reports = MediaFeedServerApi.getInstance().adminReports();
+                JSONArray shops = MediaFeedServerApi.getInstance().shops();
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (destroyed) return;
+                    statsView.setText(describe(stats));
+                    adapter.set(top, reports, shops);
+                });
+            } catch (Exception ignore) {
+            }
+        });
+    }
+
     private class AdminAdapter extends RecyclerView.Adapter<AdminHolder> {
 
         private final ArrayList<AdminItem> items = new ArrayList<>();
 
-        void set(JSONArray top, JSONArray reports) {
+        void set(JSONArray top, JSONArray reports, JSONArray shops) {
             items.clear();
             if (top != null) {
                 for (int i = 0; i < top.length(); i++) {
@@ -127,6 +196,17 @@ public class MediaAdminActivity extends Activity {
                     items.add(it);
                 }
             }
+            if (shops != null) {
+                for (int i = 0; i < shops.length(); i++) {
+                    JSONObject s = shops.optJSONObject(i);
+                    if (s == null) continue;
+                    AdminItem it = new AdminItem();
+                    it.shopId = s.optLong("id");
+                    it.title = "🏬 " + s.optString("title") + "\n" + s.optString("payment_info")
+                            + " (" + s.optString("status") + ")";
+                    items.add(it);
+                }
+            }
             notifyDataSetChanged();
         }
 
@@ -150,6 +230,7 @@ public class MediaAdminActivity extends Activity {
     private class AdminItem {
         long videoId;
         long reportId;
+        long shopId;
         boolean isTop;
         String title;
     }
@@ -175,20 +256,68 @@ public class MediaAdminActivity extends Activity {
         }
 
         private void onRowClicked() {
-            if (item == null || item.videoId == 0) {
+            if (item == null) {
+                return;
+            }
+            if (item.shopId != 0 && item.videoId == 0) {
+                final int shopId = (int) item.shopId;
+                final AlertDialog.Builder sb = new AlertDialog.Builder(MediaAdminActivity.this);
+                sb.setTitle("Shop #" + shopId);
+                sb.setMessage(item.title);
+                sb.setPositiveButton("⛔ Suspend", (dialog, which) ->
+                        Utilities.stageQueue.postRunnable(() -> {
+                            try {
+                                MediaFeedServerApi.getInstance().adminSuspendShop(shopId);
+                            } catch (Exception ignore) {
+                            }
+                            refresh();
+                        }));
+                sb.setNegativeButton(getString(R.string.Cancel), null);
+                sb.show();
+                return;
+            }
+            if (item.videoId == 0) {
                 return;
             }
             final int videoId = (int) item.videoId;
+            final boolean isReport = item.reportId != 0;
+            final int reportId = (int) item.reportId;
             final AlertDialog.Builder builder = new AlertDialog.Builder(MediaAdminActivity.this);
-            builder.setTitle("Video #" + videoId);
+            builder.setTitle(isReport ? "Report #" + reportId : "Video #" + videoId);
             builder.setMessage(item.title);
-            if (item.isTop) {
+            if (isReport) {
+                builder.setPositiveButton("✓ reviewed", (dialog, which) ->
+                        Utilities.stageQueue.postRunnable(() -> {
+                            try {
+                                MediaFeedServerApi.getInstance().adminReportStatus(reportId, "reviewed");
+                            } catch (Exception ignore) {
+                            }
+                            refresh();
+                        }));
+                builder.setNeutralButton("✗ dismissed", (dialog, which) ->
+                        Utilities.stageQueue.postRunnable(() -> {
+                            try {
+                                MediaFeedServerApi.getInstance().adminReportStatus(reportId, "dismissed");
+                            } catch (Exception ignore) {
+                            }
+                            refresh();
+                        }));
+            } else if (item.isTop) {
                 builder.setPositiveButton("🚫 Ban", (dialog, which) ->
                         Utilities.stageQueue.postRunnable(() -> {
                             try {
                                 MediaFeedServerApi.getInstance().adminBanVideo(videoId);
                             } catch (Exception ignore) {
                             }
+                            refresh();
+                        }));
+                builder.setNeutralButton("↩ Unban", (dialog, which) ->
+                        Utilities.stageQueue.postRunnable(() -> {
+                            try {
+                                MediaFeedServerApi.getInstance().adminUnbanVideo(videoId);
+                            } catch (Exception ignore) {
+                            }
+                            refresh();
                         }));
             }
             builder.setNegativeButton(getString(R.string.Cancel), null);

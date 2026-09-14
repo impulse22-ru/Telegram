@@ -11243,4 +11243,10 @@
     <string name="MediaFeedConfirm">Confirm</string>
     <string name="MediaFeedCancel">Cancel order</string>
     <string name="MediaFeedStatsMe">My stats</string>
+    <string name="MediaFeedSubscriptions">My subscriptions</string>
+    <string name="MediaFeedMyShops">My shops</string>
+    <string name="MediaFeedCreateShop">Create shop</string>
+    <string name="MediaFeedShopTitleHint">Shop title</string>
+    <string name="MediaFeedShopDescHint">Description</string>
+    <string name="MediaFeedShopPaymentHint">Payment details</string>
 </resources>

@@ -259,6 +259,35 @@ public class MediaFeedServerApi {
         request("POST", "/v1/admin/videos/" + videoId + "/ban", new JSONObject(), token);
     }
 
+    public void adminUnbanVideo(int videoId) throws Exception {
+        request("POST", "/v1/admin/videos/" + videoId + "/unban", new JSONObject(), token);
+    }
+
+    public void adminSuspendShop(int shopId) throws Exception {
+        request("POST", "/v1/admin/shops/" + shopId + "/suspend", new JSONObject(), token);
+    }
+
+    public void adminReportStatus(int reportId, String status) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("status", status);
+        request("POST", "/v1/admin/reports/" + reportId + "/status", body, token);
+    }
+
+    public JSONArray adminFilterWords() throws Exception {
+        JSONObject resp = request("GET", "/v1/admin/filter-words", null, token);
+        return resp.optJSONArray("words");
+    }
+
+    public void adminFilterWordAdd(String word) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("word", word);
+        request("POST", "/v1/admin/filter-word", body, token);
+    }
+
+    public void adminFilterWordRemove(String word) throws Exception {
+        request("DELETE", "/v1/admin/filter-word/" + word, null, token);
+    }
+
     private JSONObject request(String method, String path, JSONObject body, String bearer) throws Exception {
         URL url = new URL(apiUrl + path);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -297,5 +326,34 @@ public class MediaFeedServerApi {
             return new JSONObject();
         }
         return new JSONObject(sb.toString());
+    }
+
+    // --- Видео (одиночное + статистика) ---
+
+    public JSONObject video(int videoId) throws Exception {
+        return request("GET", "/v1/videos/" + videoId, null, token);
+    }
+
+    public JSONObject videoStats(int videoId) throws Exception {
+        return request("GET", "/v1/videos/" + videoId + "/stats", null, token);
+    }
+
+    public String join() throws Exception {
+        JSONObject resp = request("POST", "/v1/join", new JSONObject(), token);
+        return resp.optString("invite_link");
+    }
+
+    public JSONObject createProduct(long shopId, String title, String description,
+                                    double price, String currency, String category) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("shop_id", shopId);
+        body.put("title", title);
+        body.put("description", description);
+        body.put("price_amount", price);
+        body.put("price_currency", currency);
+        if (category != null) {
+            body.put("category", category);
+        }
+        return request("POST", "/v1/product", body, token);
     }
 }
