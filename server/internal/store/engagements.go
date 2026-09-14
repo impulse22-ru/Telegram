@@ -74,6 +74,38 @@ func (r *engagementsRepo) Report(ctx context.Context, userID, videoID int64, rea
 	return err
 }
 
+// Reports — список жалоб со статусом ('' = все).
+func (r *engagementsRepo) Reports(ctx context.Context, status string, limit int64) ([]Report, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pg.Query(ctx, `
+		SELECT id, user_id, video_id, COALESCE(reason,''), status, created_at
+		FROM reports
+		WHERE ($1 = '' OR status = $1)
+		ORDER BY created_at DESC
+		LIMIT $2`, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]Report, 0, limit)
+	for rows.Next() {
+		var rep Report
+		if err := rows.Scan(&rep.ID, &rep.UserID, &rep.VideoID, &rep.Reason, &rep.Status, &rep.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, rep)
+	}
+	return out, rows.Err()
+}
+
+func (r *engagementsRepo) ReportResolve(ctx context.Context, id int64, status string) error {
+	_, err := r.pg.Exec(ctx, `UPDATE reports SET status=$2 WHERE id=$1`, id, status)
+	return err
+}
+
 func (r *engagementsRepo) RecordView(ctx context.Context, userID, videoID int64, watchSeconds int) error {
 	_, err := r.pg.Exec(ctx, `
 		INSERT INTO views_log (user_id, video_id, watch_seconds)

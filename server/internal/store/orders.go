@@ -28,7 +28,26 @@ func (r *shopsRepo) List(ctx context.Context) ([]Shop, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanShops(rows)
+}
 
+func (r *shopsRepo) ListForOwner(ctx context.Context, ownerID int64) ([]Shop, error) {
+	rows, err := r.pg.Query(ctx, `
+		SELECT id, owner_id, tg_chat_id, title, COALESCE(description,''),
+		       COALESCE(payment_info,''), status FROM shops WHERE owner_id=$1 ORDER BY id`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanShops(rows)
+}
+
+func scanShops(rows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+	Close()
+}) ([]Shop, error) {
 	out := make([]Shop, 0)
 	for rows.Next() {
 		var s Shop
@@ -53,6 +72,19 @@ func (r *shopsRepo) Get(ctx context.Context, id int64) (*Shop, error) {
 	return &s, nil
 }
 
+// GetByTgChatID — магазин по tg_chat_id канала-магазина.
+func (r *shopsRepo) GetByTgChatID(ctx context.Context, tgChatID int64) (*Shop, error) {
+	var s Shop
+	err := r.pg.QueryRow(ctx, `
+		SELECT id, owner_id, tg_chat_id, title, COALESCE(description,''),
+		       COALESCE(payment_info,''), status FROM shops WHERE tg_chat_id=$1`, tgChatID).
+		Scan(&s.ID, &s.OwnerID, &s.TgChatID, &s.Title, &s.Description, &s.PaymentInfo, &s.Status)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 func (r *shopsRepo) Suspend(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `UPDATE shops SET status='suspended' WHERE id=$1`, id)
 	return err
@@ -64,31 +96,57 @@ type productsRepo struct{ pg *pgxpool.Pool }
 
 func (r *productsRepo) Insert(ctx context.Context, p Product) error {
 	_, err := r.pg.Exec(ctx, `
-		INSERT INTO products (shop_id, tg_msg_id, file_id, title, description, price_amount, price_currency, category, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		INSERT INTO products (shop_id, tg_msg_id, file_id, title, description, price_amount, price_currency, category, status, posted_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (shop_id, tg_msg_id) DO UPDATE SET
 			file_id=EXCLUDED.file_id, title=EXCLUDED.title, description=EXCLUDED.description,
 			price_amount=EXCLUDED.price_amount, price_currency=EXCLUDED.price_currency,
-			category=EXCLUDED.category, status=EXCLUDED.status`,
-		p.ShopID, p.TgMsgID, p.FileID, p.Title, p.Description, p.PriceAmount, p.PriceCurrency, p.Category, p.Status)
+			category=EXCLUDED.category, status=EXCLUDED.status, posted_at=EXCLUDED.posted_at`,
+		p.ShopID, p.TgMsgID, p.FileID, p.Title, p.Description, p.PriceAmount, p.PriceCurrency, p.Category, p.Status, p.PostedAt)
 	return err
 }
 
 func (r *productsRepo) ListByShop(ctx context.Context, shopID int64) ([]Product, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, shop_id, tg_msg_id, file_id, title, COALESCE(description,''),
-		       price_amount, price_currency, COALESCE(category,''), status
+		       price_amount, price_currency, COALESCE(category,''), status, posted_at
 		FROM products WHERE shop_id=$1 AND status='on_sale' ORDER BY id`, shopID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanProducts(rows)
+}
 
+// ListAllActive — все товары всех активных магазинов (витрина/каталог).
+func (r *productsRepo) ListAllActive(ctx context.Context, limit int64) ([]Product, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pg.Query(ctx, `
+		SELECT p.id, p.shop_id, p.tg_msg_id, p.file_id, p.title, COALESCE(p.description,''),
+		       p.price_amount, p.price_currency, COALESCE(p.category,''), p.status, p.posted_at
+		FROM products p JOIN shops s ON s.id=p.shop_id
+		WHERE p.status='on_sale' AND s.status='active'
+		ORDER BY p.id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanProducts(rows)
+}
+
+func scanProducts(rows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+	Close()
+}) ([]Product, error) {
 	out := make([]Product, 0)
 	for rows.Next() {
 		var p Product
 		if err := rows.Scan(&p.ID, &p.ShopID, &p.TgMsgID, &p.FileID, &p.Title,
-			&p.Description, &p.PriceAmount, &p.PriceCurrency, &p.Category, &p.Status); err != nil {
+			&p.Description, &p.PriceAmount, &p.PriceCurrency, &p.Category, &p.Status, &p.PostedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -110,9 +168,28 @@ func (r *productsRepo) Get(ctx context.Context, id int64) (*Product, error) {
 	return &p, nil
 }
 
+func (r *productsRepo) RecordView(ctx context.Context, userID, productID int64) error {
+	_, err := r.pg.Exec(ctx, `
+		INSERT INTO product_views (user_id, product_id) VALUES ($1,$2)`, userID, productID)
+	return err
+}
+
+func (r *productsRepo) CountViews(ctx context.Context, productID int64) (int64, error) {
+	var n int64
+	err := r.pg.QueryRow(ctx, `SELECT count(*) FROM product_views WHERE product_id=$1`, productID).Scan(&n)
+	return n, err
+}
+
+func (r *productsRepo) Hide(ctx context.Context, id int64) error {
+	_, err := r.pg.Exec(ctx, `UPDATE products SET status='hidden' WHERE id=$1`, id)
+	return err
+}
+
 var _ Products = (*productsRepo)(nil)
 
 type ordersRepo struct{ pg *pgxpool.Pool }
+
+const orderCols = `id, shop_id, buyer_id, product_id, quantity, price_amount, price_currency, payment_status, COALESCE(contact_details,''), created_at, updated_at`
 
 func (r *ordersRepo) Create(ctx context.Context, o Order) (int64, error) {
 	var id int64
@@ -128,11 +205,9 @@ func (r *ordersRepo) Create(ctx context.Context, o Order) (int64, error) {
 
 func (r *ordersRepo) Get(ctx context.Context, id int64) (*Order, error) {
 	var o Order
-	err := r.pg.QueryRow(ctx, `
-		SELECT id, shop_id, buyer_id, product_id, quantity, price_amount, price_currency, payment_status, COALESCE(contact_details,'')
-		FROM orders WHERE id=$1`, id).
+	err := r.pg.QueryRow(ctx, `SELECT `+orderCols+` FROM orders WHERE id=$1`, id).
 		Scan(&o.ID, &o.ShopID, &o.BuyerID, &o.ProductID, &o.Quantity,
-			&o.PriceAmount, &o.PriceCurrency, &o.PaymentStatus, &o.ContactDetails)
+			&o.PriceAmount, &o.PriceCurrency, &o.PaymentStatus, &o.ContactDetails, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -141,13 +216,13 @@ func (r *ordersRepo) Get(ctx context.Context, id int64) (*Order, error) {
 
 func (r *ordersRepo) ByBuyer(ctx context.Context, buyerID int64) ([]Order, error) {
 	return r.list(ctx, `
-		SELECT id, shop_id, buyer_id, product_id, quantity, price_amount, price_currency, payment_status, COALESCE(contact_details,'')
+		SELECT `+orderCols+`
 		FROM orders WHERE buyer_id=$1 ORDER BY id DESC`, buyerID)
 }
 
 func (r *ordersRepo) ByShop(ctx context.Context, shopID int64) ([]Order, error) {
 	return r.list(ctx, `
-		SELECT id, shop_id, buyer_id, product_id, quantity, price_amount, price_currency, payment_status, COALESCE(contact_details,'')
+		SELECT `+orderCols+`
 		FROM orders WHERE shop_id=$1 ORDER BY id DESC`, shopID)
 }
 
@@ -162,7 +237,7 @@ func (r *ordersRepo) list(ctx context.Context, sql string, arg int64) ([]Order, 
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.ShopID, &o.BuyerID, &o.ProductID, &o.Quantity,
-			&o.PriceAmount, &o.PriceCurrency, &o.PaymentStatus, &o.ContactDetails); err != nil {
+			&o.PriceAmount, &o.PriceCurrency, &o.PaymentStatus, &o.ContactDetails, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)

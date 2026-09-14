@@ -47,4 +47,9 @@ func (r *usersRepo) Get(ctx context.Context, id int64) (*User, error) {
 	return &u, nil
 }
 
+func (r *usersRepo) SetRole(ctx context.Context, id int64, role string) error {
+	_, err := r.pg.Exec(ctx, `UPDATE users SET role=$2 WHERE id=$1`, id, role)
+	return err
+}
+
 var _ Users = (*usersRepo)(nil)

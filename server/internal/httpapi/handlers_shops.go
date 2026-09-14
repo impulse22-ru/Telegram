@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -11,7 +12,7 @@ import (
 func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	var req struct {
-		TgChatID    int64  `json:"tg_chat_id"`
+		TgChatID    int64  `json:"tg_chat_id"` // 0 = создать канал через бота
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		PaymentInfo string `json:"payment_info"`
@@ -20,13 +21,27 @@ func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	if req.TgChatID == 0 || req.Title == "" {
-		writeErr(w, http.StatusBadRequest, "tg_chat_id and title required")
+	if req.Title == "" {
+		writeErr(w, http.StatusBadRequest, "title required")
 		return
 	}
-	id, err := s.repos.Shops.Create(r.Context(), store.Shop{
+	ctx := r.Context()
+	tgChatID := req.TgChatID
+	if tgChatID == 0 {
+		if s.bot == nil {
+			writeErr(w, http.StatusServiceUnavailable, "bot not configured")
+			return
+		}
+		createdID, err := s.bot.CreateChannel(req.Title, req.Description)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "bot api: createNewChannel failed")
+			return
+		}
+		tgChatID = createdID
+	}
+	id, err := s.repos.Shops.Create(ctx, store.Shop{
 		OwnerID:     claims.UserID,
-		TgChatID:    req.TgChatID,
+		TgChatID:    tgChatID,
 		Title:       req.Title,
 		Description: req.Description,
 		PaymentInfo: req.PaymentInfo,
@@ -36,7 +51,23 @@ func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+	// регистрируем канал как shop для индексации товаров
+	_, err = s.repos.Channels.EnsureByTgChatID(ctx, tgChatID, "shop", req.Title)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "tg_chat_id": tgChatID})
+}
+
+func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
+	items, err := s.repos.Products.ListAllActive(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (s *Server) handleShopsList(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +168,14 @@ func (s *Server) handleOrderGet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	claims := claimsFrom(r.Context())
+	shop, err := s.repos.Shops.Get(r.Context(), order.ShopID)
+	if err == nil {
+		if order.BuyerID != claims.UserID && shop.OwnerID != claims.UserID && claims.Role != "admin" {
+			writeErr(w, http.StatusForbidden, "no access")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, order)
 }
 
@@ -161,23 +200,19 @@ func (s *Server) handleOrderConfirm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	s.notifyOrder(r.Context(), order, "confirmed")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "confirmed"})
 }
 
 func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
-
-	// Все заказы магазинов, где продавец — текущий пользователь.
-	shops, err := s.repos.Shops.List(r.Context())
+	shops, err := s.repos.Shops.ListForOwner(r.Context(), claims.UserID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
 	out := []store.Order{}
 	for _, shop := range shops {
-		if shop.OwnerID != claims.UserID {
-			continue
-		}
 		orders, err := s.repos.Orders.ByShop(r.Context(), shop.ID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "db error")
@@ -186,4 +221,219 @@ func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {
 		out = append(out, orders...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"orders": out})
+}
+
+// GET /v1/orders/me — заказы текущего покупателя.
+func (s *Server) handleOrdersMine(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	orders, err := s.repos.Orders.ByBuyer(r.Context(), claims.UserID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"orders": orders})
+}
+
+// GET /v1/shops/me — мои магазины.
+func (s *Server) handleShopsMine(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	shops, err := s.repos.Shops.ListForOwner(r.Context(), claims.UserID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"shops": shops})
+}
+
+// GET /v1/shop/{id} — витрина магазина с товарами.
+func (s *Server) handleShopGet(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	products, err := s.repos.Products.ListByShop(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	subscribed := false
+	if claims := claimsFrom(r.Context()); claims != nil {
+		if ch, err := s.repos.Channels.GetByTgChatID(r.Context(), shop.TgChatID); err == nil {
+			subscribed, _ = s.repos.Subscriptions.IsSubscribed(r.Context(), claims.UserID, ch.ID)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"shop": shop, "products": products, "subscribed": subscribed})
+}
+
+// POST /v1/shops/{id}/subscribe
+func (s *Server) handleShopSubscribe(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	shopID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), shopID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	channelID, err := s.repos.Channels.EnsureByTgChatID(r.Context(), shop.TgChatID, "shop", shop.Title)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if err := s.repos.Subscriptions.Subscribe(r.Context(), claims.UserID, channelID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"subscribed": true})
+}
+
+// DELETE /v1/shops/{id}/subscribe
+func (s *Server) handleShopUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	shopID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), shopID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	channelID, err := s.repos.Channels.EnsureByTgChatID(r.Context(), shop.TgChatID, "shop", shop.Title)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if err := s.repos.Subscriptions.Unsubscribe(r.Context(), claims.UserID, channelID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"unsubscribed": true})
+}
+
+// GET /v1/me/subscriptions — мои подписки на каналы.
+func (s *Server) handleMySubscriptions(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	channelIDs, err := s.repos.Subscriptions.ByUser(r.Context(), claims.UserID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"channel_ids": channelIDs})
+}
+
+// GET /v1/product/{id}
+func (s *Server) handleProductGet(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	product, err := s.repos.Products.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	views, err := s.repos.Products.CountViews(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"product": product, "views": views})
+}
+
+// POST /v1/product/{id}/view
+func (s *Server) handleProductView(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if err := s.repos.Products.RecordView(r.Context(), claims.UserID, id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"viewed": true})
+}
+
+// POST /v1/order/{id}/pay — покупатель отметил оплату.
+func (s *Server) handleOrderPay(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	order, err := s.repos.Orders.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if order.BuyerID != claims.UserID {
+		writeErr(w, http.StatusForbidden, "not your order")
+		return
+	}
+	if err := s.repos.Orders.SetStatus(r.Context(), id, "paid"); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	s.notifyOrder(r.Context(), order, "paid")
+	writeJSON(w, http.StatusOK, map[string]any{"status": "paid"})
+}
+
+// POST /v1/order/{id}/cancel — отмена покупателем.
+func (s *Server) handleOrderCancel(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	order, err := s.repos.Orders.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if order.BuyerID != claims.UserID {
+		writeErr(w, http.StatusForbidden, "not your order")
+		return
+	}
+	if err := s.repos.Orders.SetStatus(r.Context(), id, "cancelled"); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "cancelled"})
+}
+
+// notifyOrder — шлёт уведомления продавцу/покупателю через бота (этап 7).
+func (s *Server) notifyOrder(ctx context.Context, order *store.Order, status string) {
+	if s.bot == nil {
+		return
+	}
+	shop, err := s.repos.Shops.Get(ctx, order.ShopID)
+	if err != nil {
+		return
+	}
+	seller, err := s.repos.Users.Get(ctx, shop.OwnerID)
+	if err != nil {
+		return
+	}
+	buyer, err := s.repos.Users.Get(ctx, order.BuyerID)
+	if err != nil {
+		return
+	}
+	msg := "Заказ #" + strconv.FormatInt(order.ID, 10) + ": " + status
+	_ = s.bot.SendMessage(seller.TgUserID, msg)
+	_ = s.bot.SendMessage(buyer.TgUserID, msg)
 }

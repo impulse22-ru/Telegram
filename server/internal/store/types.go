@@ -50,28 +50,31 @@ type Shop struct {
 }
 
 type Product struct {
-	ID            int64   `json:"id"`
-	ShopID        int64   `json:"shop_id"`
-	TgMsgID       int64   `json:"tg_msg_id"`
-	FileID        string  `json:"file_id"`
-	Title         string  `json:"title"`
-	Description   string  `json:"description"`
-	PriceAmount   float64 `json:"price_amount"`
-	PriceCurrency string  `json:"price_currency"`
-	Category      string  `json:"category"`
-	Status        string  `json:"status"`
+	ID            int64     `json:"id"`
+	ShopID        int64     `json:"shop_id"`
+	TgMsgID       int64     `json:"tg_msg_id"`
+	FileID        string    `json:"file_id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	PriceAmount   float64   `json:"price_amount"`
+	PriceCurrency string    `json:"price_currency"`
+	Category      string    `json:"category"`
+	Status        string    `json:"status"`
+	PostedAt      time.Time `json:"posted_at"`
 }
 
 type Order struct {
-	ID            int64   `json:"id"`
-	ShopID        int64   `json:"shop_id"`
-	BuyerID       int64   `json:"buyer_id"`
-	ProductID     int64   `json:"product_id"`
-	Quantity      int     `json:"quantity"`
-	PriceAmount   float64 `json:"price_amount"`
-	PriceCurrency string  `json:"price_currency"`
-	PaymentStatus string  `json:"payment_status"`
-	ContactDetails string `json:"contact_details"`
+	ID             int64     `json:"id"`
+	ShopID         int64     `json:"shop_id"`
+	BuyerID        int64     `json:"buyer_id"`
+	ProductID      int64     `json:"product_id"`
+	Quantity       int       `json:"quantity"`
+	PriceAmount    float64   `json:"price_amount"`
+	PriceCurrency  string    `json:"price_currency"`
+	PaymentStatus  string    `json:"payment_status"`
+	ContactDetails string    `json:"contact_details"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type Comment struct {
@@ -92,6 +95,55 @@ type Report struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ViewDay — сводка просмотров за одни сутки.
+type ViewDay struct {
+	Day     time.Time `json:"day"`
+	Views   int64     `json:"views"`
+	Uniques int64     `json:"unique_viewers"`
+}
+
+// VideoStat — аналитика по одному видео / топ видео.
+type VideoStat struct {
+	VideoID int64  `json:"video_id"`
+	Views   int64  `json:"views"`
+	Uniques int64  `json:"unique_viewers"`
+	Likes   int64  `json:"likes"`
+	AvgWatchSeconds float64 `json:"avg_watch_seconds"`
+}
+
+// AdminStats — сводка для дашборда (этап 3).
+type AdminStats struct {
+	Users        int64   `json:"users"`
+	Videos       int64   `json:"videos"`
+	VisibleVideos int64  `json:"visible_videos"`
+	Views        int64   `json:"views"`
+	Likes        int64   `json:"likes"`
+	Comments     int64   `json:"comments"`
+	ReportsOpen  int64   `json:"reports_open"`
+	Shops        int64   `json:"shops"`
+	Products     int64   `json:"products"`
+	Orders       int64   `json:"orders"`
+	Revenue      float64 `json:"revenue"`
+}
+
+// SellerStats — аналитика продавца (этап 7).
+type SellerStats struct {
+	Orders        int64   `json:"orders"`
+	Pending       int64   `json:"pending"`
+	Confirmed     int64   `json:"confirmed"`
+	Revenue       float64 `json:"revenue"`
+	ByProduct     []ProductStat `json:"by_product"`
+	Views         int64   `json:"product_views"`
+}
+
+type ProductStat struct {
+	ProductID int64   `json:"product_id"`
+	Title     string  `json:"title"`
+	Views     int64   `json:"views"`
+	Orders    int64   `json:"orders"`
+	Revenue   float64 `json:"revenue"`
+}
+
 // --- Репозитории (интерфейсы + реализация на pgxpool) ---
 
 type Channels interface {
@@ -103,27 +155,37 @@ type Users interface {
 	Upsert(ctx context.Context, u User) (int64, error)
 	GetByTgID(ctx context.Context, tgID int64) (*User, error)
 	Get(ctx context.Context, id int64) (*User, error)
+	SetRole(ctx context.Context, id int64, role string) error
 }
 
 type Videos interface {
 	Insert(ctx context.Context, v Video) error
 	VisibleFrom(ctx context.Context, channelID, after, limit int64) ([]Video, error)
+	Search(ctx context.Context, q string, limit int64) ([]Video, error)
 	GetByTgMsg(ctx context.Context, channelID, tgMsgID int64) (*Video, error)
 	Ban(ctx context.Context, id int64) error
+	Unban(ctx context.Context, id int64) error
 	Get(ctx context.Context, id int64) (*Video, error)
+	Count(ctx context.Context, status string) (int64, error)
 }
 
 type Shops interface {
 	Create(ctx context.Context, s Shop) (int64, error)
 	List(ctx context.Context) ([]Shop, error)
+	ListForOwner(ctx context.Context, ownerID int64) ([]Shop, error)
 	Get(ctx context.Context, id int64) (*Shop, error)
+	GetByTgChatID(ctx context.Context, tgChatID int64) (*Shop, error)
 	Suspend(ctx context.Context, id int64) error
 }
 
 type Products interface {
 	Insert(ctx context.Context, p Product) error
 	ListByShop(ctx context.Context, shopID int64) ([]Product, error)
+	ListAllActive(ctx context.Context, limit int64) ([]Product, error)
 	Get(ctx context.Context, id int64) (*Product, error)
+	RecordView(ctx context.Context, userID, productID int64) error
+	CountViews(ctx context.Context, productID int64) (int64, error)
+	Hide(ctx context.Context, id int64) error
 }
 
 type Orders interface {
@@ -142,6 +204,8 @@ type Engagements interface {
 	Comment(ctx context.Context, userID, videoID int64, text string, parentID int64) (int64, error)
 	Comments(ctx context.Context, videoID int64, limit int64) ([]Comment, error)
 	Report(ctx context.Context, userID, videoID int64, reason string) error
+	Reports(ctx context.Context, status string, limit int64) ([]Report, error)
+	ReportResolve(ctx context.Context, id int64, status string) error
 	RecordView(ctx context.Context, userID, videoID int64, watchSeconds int) error
 	CountViews(ctx context.Context, videoID int64) (int64, error)
 }
@@ -152,26 +216,53 @@ type Feed interface {
 	RemoveVideo(ctx context.Context, channelID, videoID int64) error
 }
 
+type Stats interface {
+	VideoViewsDay(ctx context.Context, videoID int64, days int) ([]ViewDay, error)
+	VideoStat(ctx context.Context, videoID int64) (*VideoStat, error)
+	TopVideos(ctx context.Context, limit int64) ([]VideoStat, error)
+	AdminStats(ctx context.Context) (*AdminStats, error)
+	SellerStats(ctx context.Context, ownerID int64) (*SellerStats, error)
+}
+
+type Subscriptions interface {
+	Subscribe(ctx context.Context, userID, channelID int64) error
+	Unsubscribe(ctx context.Context, userID, channelID int64) error
+	IsSubscribed(ctx context.Context, userID, channelID int64) (bool, error)
+	ByUser(ctx context.Context, userID int64) ([]int64, error)
+}
+
+type Filter interface {
+	Add(ctx context.Context, word string) error
+	List(ctx context.Context) ([]string, error)
+	Remove(ctx context.Context, word string) error
+}
+
 type Repos struct {
-	Channels    Channels
-	Users       Users
-	Videos      Videos
-	Shops       Shops
-	Products    Products
-	Orders      Orders
-	Engagements Engagements
-	Feed        Feed
+	Channels     Channels
+	Users        Users
+	Videos       Videos
+	Shops        Shops
+	Products     Products
+	Orders       Orders
+	Engagements  Engagements
+	Feed         Feed
+	Stats        Stats
+	Subscriptions Subscriptions
+	Filter       Filter
 }
 
 func NewRepos(s *Store) *Repos {
 	return &Repos{
-		Channels:    &channelsRepo{pg: s.PG},
-		Users:       &usersRepo{pg: s.PG},
-		Videos:      &videosRepo{pg: s.PG},
-		Shops:       &shopsRepo{pg: s.PG},
-		Products:    &productsRepo{pg: s.PG},
-		Orders:      &ordersRepo{pg: s.PG},
-		Engagements: &engagementsRepo{pg: s.PG},
-		Feed:        &feedRepo{rdb: s.Redis},
+		Channels:      &channelsRepo{pg: s.PG},
+		Users:         &usersRepo{pg: s.PG},
+		Videos:        &videosRepo{pg: s.PG},
+		Shops:         &shopsRepo{pg: s.PG},
+		Products:      &productsRepo{pg: s.PG},
+		Orders:        &ordersRepo{pg: s.PG},
+		Engagements:   &engagementsRepo{pg: s.PG},
+		Feed:          &feedRepo{rdb: s.Redis},
+		Stats:         &statsRepo{pg: s.PG},
+		Subscriptions: &subscriptionsRepo{pg: s.PG},
+		Filter:        &filterRepo{pg: s.PG},
 	}
 }

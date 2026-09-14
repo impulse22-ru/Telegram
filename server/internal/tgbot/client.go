@@ -145,3 +145,30 @@ type ApproveJoinRequestReq struct {
 func (c *Client) ApproveJoinRequest(chatID, userID int64) error {
 	return c.call("approveChatJoinRequest", ApproveJoinRequestReq{ChatID: chatID, UserID: userID}, nil)
 }
+
+type SendMessageReq struct {
+	ChatID int64  `json:"chat_id"`
+	Text   string `json:"text"`
+}
+
+func (c *Client) SendMessage(chatID int64, text string) error {
+	return c.call("sendMessage", SendMessageReq{ChatID: chatID, Text: text}, nil)
+}
+
+// CreateChannel — создаёт публичный канал (бот становится владельцем) и
+// возвращает его tg_chat_id.
+func (c *Client) CreateChannel(title, description string) (int64, error) {
+	var out struct {
+		Chat struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+	}
+	payload := map[string]string{"title": title}
+	if description != "" {
+		payload["description"] = description
+	}
+	if err := c.call("createNewChannel", payload, &out); err != nil {
+		return 0, err
+	}
+	return out.Chat.ID, nil
+}
