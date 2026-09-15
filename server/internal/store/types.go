@@ -11,6 +11,7 @@ type User struct {
 	Phone     string    `json:"phone"`
 	Name      string    `json:"name"`
 	Role      string    `json:"role"`
+	Banned    bool      `json:"banned"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -46,6 +47,7 @@ type Shop struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	PaymentInfo string `json:"payment_info"`
+	ImageURL    string `json:"image_url"`
 	Status      string `json:"status"`
 }
 
@@ -59,6 +61,7 @@ type Product struct {
 	PriceAmount   float64   `json:"price_amount"`
 	PriceCurrency string    `json:"price_currency"`
 	Category      string    `json:"category"`
+	ImageURL      string    `json:"image_url"`
 	Status        string    `json:"status"`
 	PostedAt      time.Time `json:"posted_at"`
 }
@@ -165,6 +168,7 @@ type Users interface {
 	GetByTgID(ctx context.Context, tgID int64) (*User, error)
 	Get(ctx context.Context, id int64) (*User, error)
 	SetRole(ctx context.Context, id int64, role string) error
+	SetBanned(ctx context.Context, id int64, banned bool) error
 }
 
 type Videos interface {
@@ -185,14 +189,19 @@ type Shops interface {
 	ListForOwner(ctx context.Context, ownerID int64) ([]Shop, error)
 	Get(ctx context.Context, id int64) (*Shop, error)
 	GetByTgChatID(ctx context.Context, tgChatID int64) (*Shop, error)
+	Update(ctx context.Context, id int64, title, description, paymentInfo, imageURL string) error
+	Delete(ctx context.Context, id int64) error
+	Search(ctx context.Context, q string) ([]Shop, error)
 	Suspend(ctx context.Context, id int64) error
 }
 
 type Products interface {
 	Insert(ctx context.Context, p Product) error
 	ListByShop(ctx context.Context, shopID int64) ([]Product, error)
-	ListAllActive(ctx context.Context, limit int64) ([]Product, error)
+	ListAllActive(ctx context.Context, limit int64, category string) ([]Product, error)
 	Get(ctx context.Context, id int64) (*Product, error)
+	Update(ctx context.Context, id int64, title, description string, price float64, currency, category, imageURL string) error
+	Delete(ctx context.Context, id int64) error
 	RecordView(ctx context.Context, userID, productID int64) error
 	CountViews(ctx context.Context, productID int64) (int64, error)
 	Hide(ctx context.Context, id int64) error
@@ -201,8 +210,8 @@ type Products interface {
 type Orders interface {
 	Create(ctx context.Context, o Order) (int64, error)
 	Get(ctx context.Context, id int64) (*Order, error)
-	ByBuyer(ctx context.Context, buyerID int64) ([]Order, error)
-	ByShop(ctx context.Context, shopID int64) ([]Order, error)
+	ByBuyer(ctx context.Context, buyerID int64, limit, offset int64) ([]Order, error)
+	ByShop(ctx context.Context, shopID int64, limit, offset int64) ([]Order, error)
 	SetStatus(ctx context.Context, id int64, status string) error
 	SetChatLink(ctx context.Context, orderID, tgChatID int64) (int64, error)
 	GetChatLink(ctx context.Context, orderID int64) (int64, bool, error)
@@ -215,6 +224,8 @@ type Engagements interface {
 	CountLikes(ctx context.Context, videoID int64) (int64, error)
 	Comment(ctx context.Context, userID, videoID int64, text string, parentID int64) (int64, error)
 	Comments(ctx context.Context, videoID int64, limit int64) ([]Comment, error)
+	CommentsAll(ctx context.Context, limit int64) ([]Comment, error)
+	CountComments(ctx context.Context, videoID int64) (int64, error)
 	DeleteComment(ctx context.Context, commentID int64) error
 	Report(ctx context.Context, userID, videoID int64, reason string) error
 	Reports(ctx context.Context, status string, limit int64) ([]Report, error)
@@ -252,18 +263,34 @@ type Filter interface {
 	Remove(ctx context.Context, word string) error
 }
 
+type Review struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	ProductID int64     `json:"product_id"`
+	Rating    int       `json:"rating"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Reviews interface {
+	Add(ctx context.Context, r Review) error
+	ByProduct(ctx context.Context, productID int64) ([]Review, error)
+	AvgRating(ctx context.Context, productID int64) (float64, int64, error)
+}
+
 type Repos struct {
-	Channels     Channels
-	Users        Users
-	Videos       Videos
-	Shops        Shops
-	Products     Products
-	Orders       Orders
-	Engagements  Engagements
-	Feed         Feed
-	Stats        Stats
+	Channels      Channels
+	Users         Users
+	Videos        Videos
+	Shops         Shops
+	Products      Products
+	Orders        Orders
+	Engagements   Engagements
+	Feed          Feed
+	Stats         Stats
 	Subscriptions Subscriptions
-	Filter       Filter
+	Filter        Filter
+	Reviews       Reviews
 }
 
 func NewRepos(s *Store) *Repos {
@@ -279,5 +306,6 @@ func NewRepos(s *Store) *Repos {
 		Stats:         &statsRepo{pg: s.PG},
 		Subscriptions: &subscriptionsRepo{pg: s.PG},
 		Filter:        &filterRepo{pg: s.PG},
+		Reviews:       &reviewsRepo{pg: s.PG},
 	}
 }

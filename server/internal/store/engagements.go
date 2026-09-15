@@ -46,14 +46,40 @@ func (r *engagementsRepo) Comment(ctx context.Context, userID, videoID int64, te
 }
 
 func (r *engagementsRepo) DeleteComment(ctx context.Context, commentID int64) error {
-	_, err := r.pg.Exec(ctx, `DELETE FROM comments WHERE id=$1`, commentID)
+	_, err := r.pg.Exec(ctx, `UPDATE comments SET deleted=true WHERE id=$1`, commentID)
 	return err
+}
+
+func (r *engagementsRepo) CountComments(ctx context.Context, videoID int64) (int64, error) {
+	var n int64
+	err := r.pg.QueryRow(ctx, `SELECT count(*) FROM comments WHERE video_id=$1`, videoID).Scan(&n)
+	return n, err
 }
 
 func (r *engagementsRepo) Comments(ctx context.Context, videoID, limit int64) ([]Comment, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, user_id, video_id, text, COALESCE(parent_id,0), created_at
-		FROM comments WHERE video_id=$1 ORDER BY id LIMIT $2`, videoID, limit)
+		FROM comments WHERE video_id=$1 AND deleted=false ORDER BY id LIMIT $2`, videoID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]Comment, 0, limit)
+	for rows.Next() {
+		var c Comment
+		if err := rows.Scan(&c.ID, &c.UserID, &c.VideoID, &c.Text, &c.ParentID, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (r *engagementsRepo) CommentsAll(ctx context.Context, limit int64) ([]Comment, error) {
+	rows, err := r.pg.Query(ctx, `
+		SELECT id, user_id, video_id, text, COALESCE(parent_id,0), created_at
+		FROM comments WHERE deleted=false ORDER BY id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}

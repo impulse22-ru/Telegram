@@ -9,6 +9,22 @@ import (
 	"tgcloud/server/internal/store"
 )
 
+func parseLimit(s string) int64 {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 || n > 200 {
+		return 50
+	}
+	return n
+}
+
+func parseOffset(s string) int64 {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	var req struct {
@@ -62,7 +78,8 @@ func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
-	items, err := s.repos.Products.ListAllActive(r.Context(), limit)
+	category := r.URL.Query().Get("category")
+	items, err := s.repos.Products.ListAllActive(r.Context(), limit, category)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
@@ -77,6 +94,68 @@ func (s *Server) handleShopsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"shops": shops})
+}
+
+func (s *Server) handleShopsSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		writeErr(w, http.StatusBadRequest, "q required")
+		return
+	}
+	shops, err := s.repos.Shops.Search(r.Context(), q)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"shops": shops})
+}
+
+func (s *Server) handleShopUpdate(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), id)
+	if err != nil || shop.OwnerID != claims.UserID {
+		writeErr(w, http.StatusForbidden, "not your shop")
+		return
+	}
+	var req struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		PaymentInfo string `json:"payment_info"`
+		ImageURL    string `json:"image_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if err := s.repos.Shops.Update(r.Context(), id, req.Title, req.Description, req.PaymentInfo, req.ImageURL); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": true})
+}
+
+func (s *Server) handleShopDelete(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), id)
+	if err != nil || shop.OwnerID != claims.UserID {
+		writeErr(w, http.StatusForbidden, "not your shop")
+		return
+	}
+	if err := s.repos.Shops.Delete(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
 func (s *Server) handleProductCreate(w http.ResponseWriter, r *http.Request) {
@@ -282,6 +361,8 @@ func (s *Server) handleOrderChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
+	limit := parseLimit(r.URL.Query().Get("limit"))
+	offset := parseOffset(r.URL.Query().Get("offset"))
 	shops, err := s.repos.Shops.ListForOwner(r.Context(), claims.UserID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
@@ -289,7 +370,7 @@ func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []store.Order{}
 	for _, shop := range shops {
-		orders, err := s.repos.Orders.ByShop(r.Context(), shop.ID)
+		orders, err := s.repos.Orders.ByShop(r.Context(), shop.ID, limit, offset)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "db error")
 			return
@@ -302,7 +383,9 @@ func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {
 // GET /v1/orders/me — заказы текущего покупателя.
 func (s *Server) handleOrdersMine(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
-	orders, err := s.repos.Orders.ByBuyer(r.Context(), claims.UserID)
+	limit := parseLimit(r.URL.Query().Get("limit"))
+	offset := parseOffset(r.URL.Query().Get("offset"))
+	orders, err := s.repos.Orders.ByBuyer(r.Context(), claims.UserID, limit, offset)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
@@ -441,6 +524,66 @@ func (s *Server) handleProductView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"viewed": true})
+}
+
+func (s *Server) handleProductUpdate(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	p, err := s.repos.Products.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no product")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), p.ShopID)
+	if err != nil || shop.OwnerID != claims.UserID {
+		writeErr(w, http.StatusForbidden, "not your shop")
+		return
+	}
+	var req struct {
+		Title       string  `json:"title"`
+		Description string  `json:"description"`
+		Price       float64 `json:"price"`
+		Currency    string  `json:"currency"`
+		Category    string  `json:"category"`
+		ImageURL    string  `json:"image_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if err := s.repos.Products.Update(r.Context(), id, req.Title, req.Description, req.Price, req.Currency, req.Category, req.ImageURL); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": true})
+}
+
+func (s *Server) handleProductDelete(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	p, err := s.repos.Products.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no product")
+		return
+	}
+	shop, err := s.repos.Shops.Get(r.Context(), p.ShopID)
+	if err != nil || shop.OwnerID != claims.UserID {
+		writeErr(w, http.StatusForbidden, "not your shop")
+		return
+	}
+	if err := s.repos.Products.Delete(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
 // POST /v1/order/{id}/pay — покупатель отметил оплату.

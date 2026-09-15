@@ -11253,4 +11253,12 @@
     <string name="MediaFeedSearchHint">Search query</string>
     <string name="MediaFeedNewProduct">New product</string>
     <string name="MediaFeedProductTitle">Product title</string>
+    <string name="MediaFeedEditShop">Edit shop</string>
+    <string name="MediaFeedDeleteShop">Delete shop</string>
+    <string name="MediaFeedEditProduct">Edit product</string>
+    <string name="MediaFeedDeleteProduct">Delete product</string>
+    <string name="MediaFeedFilterWords">Filter words</string>
+    <string name="MediaFeedDeleteComment">Delete comment</string>
+    <string name="MediaFeedReview">Review</string>
+    <string name="MediaFeedReviewTextHint">Your feedback</string>
 </resources>

@@ -17,9 +17,11 @@ type Server struct {
 	bot           *tgbot.Client
 	rl            *rateLimiter
 	metrics       *metrics
+	uploadDir     string
+	httpAddr      string
 }
 
-func New(repos *store.Repos, am *auth.Manager, feedChannelID int64, bot *tgbot.Client) *Server {
+func New(repos *store.Repos, am *auth.Manager, feedChannelID int64, bot *tgbot.Client, uploadDir, httpAddr string) *Server {
 	return &Server{
 		repos:         repos,
 		auth:          am,
@@ -27,6 +29,8 @@ func New(repos *store.Repos, am *auth.Manager, feedChannelID int64, bot *tgbot.C
 		bot:           bot,
 		rl:            newRateLimiter(),
 		metrics:       newMetrics(),
+		uploadDir:     uploadDir,
+		httpAddr:      httpAddr,
 	}
 }
 
@@ -50,16 +54,23 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("POST /v1/shop", s.authMW(s.handleShopCreate))
 	mux.HandleFunc("GET /v1/shops", s.authMW(s.handleShopsList))
+	mux.HandleFunc("GET /v1/shops/search", s.authMW(s.handleShopsSearch))
 	mux.HandleFunc("GET /v1/shops/me", s.authMW(s.handleShopsMine))
 	mux.HandleFunc("GET /v1/catalog", s.authMW(s.handleCatalog))
 	mux.HandleFunc("GET /v1/shop/{id}", s.authMW(s.handleShopGet))
+	mux.HandleFunc("PUT /v1/shop/{id}", s.authMW(s.handleShopUpdate))
+	mux.HandleFunc("DELETE /v1/shop/{id}", s.authMW(s.handleShopDelete))
 	mux.HandleFunc("POST /v1/shops/{id}/subscribe", s.authMW(s.handleShopSubscribe))
 	mux.HandleFunc("DELETE /v1/shops/{id}/subscribe", s.authMW(s.handleShopUnsubscribe))
 	mux.HandleFunc("GET /v1/me/subscriptions", s.authMW(s.handleMySubscriptions))
 
 	mux.HandleFunc("POST /v1/product", s.authMW(s.handleProductCreate))
 	mux.HandleFunc("GET /v1/product/{id}", s.authMW(s.handleProductGet))
+	mux.HandleFunc("PUT /v1/product/{id}", s.authMW(s.handleProductUpdate))
+	mux.HandleFunc("DELETE /v1/product/{id}", s.authMW(s.handleProductDelete))
 	mux.HandleFunc("POST /v1/product/{id}/view", s.authMW(s.handleProductView))
+	mux.HandleFunc("POST /v1/product/{id}/review", s.authMW(s.rlMW(s.handleReviewAdd)))
+	mux.HandleFunc("GET /v1/product/{id}/reviews", s.authMW(s.handleReviewsByProduct))
 
 	mux.HandleFunc("POST /v1/order", s.authMW(s.handleOrderCreate))
 	mux.HandleFunc("GET /v1/order/{id}", s.authMW(s.handleOrderGet))
@@ -81,12 +92,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/admin/videos/{id}/unban", s.authMW(s.adminMW(s.handleAdminVideoUnban)))
 	mux.HandleFunc("DELETE /v1/admin/videos/{id}", s.authMW(s.adminMW(s.handleAdminVideoDelete)))
 	mux.HandleFunc("DELETE /v1/admin/comments/{id}", s.authMW(s.adminMW(s.handleAdminCommentDelete)))
+	mux.HandleFunc("GET /v1/admin/comments", s.authMW(s.adminMW(s.handleAdminCommentsList)))
+	mux.HandleFunc("POST /v1/admin/users/{id}/ban", s.authMW(s.adminMW(s.handleAdminUserBan)))
+	mux.HandleFunc("POST /v1/admin/users/{id}/unban", s.authMW(s.adminMW(s.handleAdminUserUnban)))
 	mux.HandleFunc("POST /v1/admin/shops/{id}/suspend", s.authMW(s.adminMW(s.handleAdminShopSuspend)))
 	mux.HandleFunc("GET /v1/admin/filter-words", s.authMW(s.adminMW(s.handleFilterWordsList)))
 	mux.HandleFunc("POST /v1/admin/filter-word", s.authMW(s.adminMW(s.handleFilterWordAdd)))
 	mux.HandleFunc("DELETE /v1/admin/filter-word/{word}", s.authMW(s.adminMW(s.handleFilterWordRemove)))
 
-	return s.requestLog(mux)
+	mux.HandleFunc("POST /v1/upload", s.authMW(s.handleUpload))
+	if s.uploadDir != "" {
+		mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(s.uploadDir))))
+	}
+
+	return s.requestLog(corsMW(mux))
 }
 
 // --- helpers ---
@@ -116,6 +135,10 @@ func (s *Server) authMW(next http.HandlerFunc) http.HandlerFunc {
 		claims, err := s.auth.Parse(token[len(prefix):])
 		if err != nil {
 			writeErr(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		if u, err := s.repos.Users.Get(r.Context(), claims.UserID); err == nil && u.Banned {
+			writeErr(w, http.StatusForbidden, "banned")
 			return
 		}
 		next(w, r.WithContext(withClaims(r.Context(), claims)))

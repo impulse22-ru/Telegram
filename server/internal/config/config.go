@@ -18,6 +18,7 @@ type Config struct {
 	FeedChID      int64 // закрытый канал ленты (tg_chat_id)
 	RelayPort     string
 	RelayCacheDir string
+	UploadDir     string
 }
 
 func Load() Config {
@@ -33,6 +34,7 @@ func Load() Config {
 		FeedChID:      getInt64("FEED_CHAT_ID", 0),
 		RelayPort:     get("RELAY_PORT", "8082"),
 		RelayCacheDir: get("RELAY_CACHE_DIR", "./media_cache"),
+		UploadDir:     get("UPLOAD_DIR", "./uploads"),
 	}
 }
 

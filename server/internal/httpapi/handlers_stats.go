@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"tgcloud/server/internal/store"
 )
 
 // GET /v1/videos/{id}/stats — аналитика просмотров конкретного видео.
@@ -18,6 +20,21 @@ func (s *Server) handleVideoStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	likes, err := s.repos.Engagements.CountLikes(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	comments, err := s.repos.Engagements.CountComments(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	views, err := s.repos.Engagements.CountViews(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
 	days := 7
 	if sd := r.URL.Query().Get("days"); sd != "" {
 		if n, err := strconv.Atoi(sd); err == nil && n > 0 && n <= 90 {
@@ -29,7 +46,7 @@ func (s *Server) handleVideoStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"stat": v, "by_day": byDay})
+	writeJSON(w, http.StatusOK, map[string]any{"stat": v, "by_day": byDay, "likes": likes, "comments": comments, "views": views})
 }
 
 // GET /v1/stats/me — статистика моих просмотров/лайков.
@@ -222,4 +239,58 @@ func (s *Server) handleFilterWordRemove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"removed": true})
+}
+
+// POST /v1/admin/users/{id}/ban — бан пользователя.
+func (s *Server) handleAdminUserBan(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if id == claims.UserID {
+		writeErr(w, http.StatusBadRequest, "cannot ban self")
+		return
+	}
+	if err := s.repos.Users.SetBanned(r.Context(), id, true); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"banned": true})
+}
+
+// POST /v1/admin/users/{id}/unban — разбан пользователя.
+func (s *Server) handleAdminUserUnban(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if err := s.repos.Users.SetBanned(r.Context(), id, false); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"unbanned": true})
+}
+
+// GET /v1/admin/comments?video_id=&limit= — список комментариев (не удалённых).
+func (s *Server) handleAdminCommentsList(w http.ResponseWriter, r *http.Request) {
+	videoID, _ := strconv.ParseInt(r.URL.Query().Get("video_id"), 10, 64)
+	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var out []store.Comment
+	var err error
+	if videoID > 0 {
+		out, err = s.repos.Engagements.Comments(r.Context(), videoID, limit)
+	} else {
+		out, err = s.repos.Engagements.CommentsAll(r.Context(), limit)
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"comments": out})
 }

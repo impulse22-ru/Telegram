@@ -40,7 +40,7 @@ func run(cfg config.Config) error {
 	if cfg.BotToken != "" {
 		bot = tgbot.New(cfg.BotAPIBase, cfg.BotToken)
 	}
-	srv := httpapi.New(store.NewRepos(st), am, cfg.FeedChID, bot)
+	srv := httpapi.New(store.NewRepos(st), am, cfg.FeedChID, bot, cfg.UploadDir, cfg.HTTPAddr)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

@@ -138,8 +138,8 @@ public class MediaFeedServerApi {
 
     // --- Магазины и товары (этап 6) ---
 
-    public JSONArray catalog() throws Exception {
-        JSONObject resp = request("GET", "/v1/catalog", null, token);
+    public JSONArray catalog(String category) throws Exception {
+        JSONObject resp = request("GET", "/v1/catalog" + (category != null && !category.isEmpty() ? "?category=" + java.net.URLEncoder.encode(category, "UTF-8") : ""), null, token);
         return resp.optJSONArray("items");
     }
 
@@ -157,20 +157,40 @@ public class MediaFeedServerApi {
         return request("GET", "/v1/shop/" + shopId, null, token);
     }
 
-    public JSONObject createShop(long tgChatId, String title, String description, String paymentInfo) throws Exception {
+    public void updateShop(int shopId, String title, String description, String paymentInfo, String imageURL) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("title", title);
+        body.put("description", description);
+        body.put("payment_info", paymentInfo);
+        if (imageURL != null) body.put("image_url", imageURL);
+        request("PUT", "/v1/shop/" + shopId, body, token);
+    }
+
+    public void deleteShop(int shopId) throws Exception {
+        request("DELETE", "/v1/shop/" + shopId, null, token);
+    }
+
+    public JSONArray searchShops(String q) throws Exception {
+        return request("GET", "/v1/shops/search?q=" + java.net.URLEncoder.encode(q, "UTF-8"), null, token)
+                .optJSONArray("shops");
+    }
+
+    public JSONObject createShop(long tgChatId, String title, String description, String paymentInfo, String imageURL) throws Exception {
         JSONObject body = new JSONObject();
         body.put("tg_chat_id", tgChatId);
         body.put("title", title);
         if (description != null) body.put("description", description);
         if (paymentInfo != null) body.put("payment_info", paymentInfo);
+        if (imageURL != null) body.put("image_url", imageURL);
         return request("POST", "/v1/shop", body, token);
     }
 
-    public JSONObject createShopAuto(String title, String description, String paymentInfo) throws Exception {
+    public JSONObject createShopAuto(String title, String description, String paymentInfo, String imageURL) throws Exception {
         JSONObject body = new JSONObject();
         body.put("title", title);
         if (description != null) body.put("description", description);
         if (paymentInfo != null) body.put("payment_info", paymentInfo);
+        if (imageURL != null) body.put("image_url", imageURL);
         return request("POST", "/v1/shop", body, token);
     }
 
@@ -189,6 +209,32 @@ public class MediaFeedServerApi {
 
     public JSONObject product(int productId) throws Exception {
         return request("GET", "/v1/product/" + productId, null, token);
+    }
+
+    public void updateProduct(int productId, String title, String description, double price, String currency, String category, String imageURL) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("title", title);
+        body.put("description", description);
+        body.put("price", price);
+        body.put("currency", currency);
+        body.put("category", category);
+        if (imageURL != null) body.put("image_url", imageURL);
+        request("PUT", "/v1/product/" + productId, body, token);
+    }
+
+    public void deleteProduct(int productId) throws Exception {
+        request("DELETE", "/v1/product/" + productId, null, token);
+    }
+
+    public void review(int productId, int rating, String text) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("rating", rating);
+        if (text != null) body.put("text", text);
+        request("POST", "/v1/product/" + productId + "/review", body, token);
+    }
+
+    public JSONObject reviews(int productId) throws Exception {
+        return request("GET", "/v1/product/" + productId + "/reviews", null, token);
     }
 
     public void productView(int productId) throws Exception {
@@ -276,6 +322,18 @@ public class MediaFeedServerApi {
         request("DELETE", "/v1/admin/comments/" + commentId, null, token);
     }
 
+    public JSONArray adminComments() throws Exception {
+        return request("GET", "/v1/admin/comments", null, token).optJSONArray("comments");
+    }
+
+    public void adminBanUser(int userId) throws Exception {
+        request("POST", "/v1/admin/users/" + userId + "/ban", new JSONObject(), token);
+    }
+
+    public void adminUnbanUser(int userId) throws Exception {
+        request("POST", "/v1/admin/users/" + userId + "/unban", new JSONObject(), token);
+    }
+
     public void adminSuspendShop(int shopId) throws Exception {
         request("POST", "/v1/admin/shops/" + shopId + "/suspend", new JSONObject(), token);
     }
@@ -357,7 +415,7 @@ public class MediaFeedServerApi {
     }
 
     public JSONObject createProduct(long shopId, String title, String description,
-                                    double price, String currency, String category) throws Exception {
+                                    double price, String currency, String category, String imageURL) throws Exception {
         JSONObject body = new JSONObject();
         body.put("shop_id", shopId);
         body.put("title", title);
@@ -367,6 +425,43 @@ public class MediaFeedServerApi {
         if (category != null) {
             body.put("category", category);
         }
+        if (imageURL != null) {
+            body.put("image_url", imageURL);
+        }
         return request("POST", "/v1/product", body, token);
+    }
+
+    public String uploadImage(byte[] data) throws Exception {
+        String boundary = "----media" + System.currentTimeMillis();
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(apiUrl + "/v1/upload").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setUseCaches(false);
+        conn.setRequestProperty("Authorization", "Bearer " + token);
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        java.io.OutputStream os = conn.getOutputStream();
+        os.write(("--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"file\"; filename=\"img.jpg\"\r\n" +
+                "Content-Type: image/jpeg\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        os.write(data);
+        os.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        os.flush();
+        os.close();
+        int code = conn.getResponseCode();
+        java.io.InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+        StringBuilder sb = new StringBuilder();
+        if (in != null) {
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(in, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    sb.append(line);
+                }
+            }
+        }
+        conn.disconnect();
+        if (code < 200 || code >= 300) {
+            throw new Exception("http " + code + ": " + sb);
+        }
+        return new JSONObject(sb.toString()).optString("url", "");
     }
 }

@@ -1,6 +1,7 @@
 package org.telegram.ui;
 
 import android.app.Activity;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -50,7 +51,7 @@ public class MediaAdminActivity extends Activity {
         statsView.setTextSize(14f);
         statsView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         statsView.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
-        statsView.setOnClickListener(v -> manageFilterWords());
+        statsView.setOnClickListener(v -> showAdminMenu());
         root.addView(statsView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         list = new RecyclerView(this);
@@ -97,6 +98,87 @@ public class MediaAdminActivity extends Activity {
         sb.append("orders: ").append(s.optLong("orders")).append("\n");
         sb.append("reports: ").append(s.optLong("reports"));
         return sb.toString();
+    }
+
+    private void showAdminMenu() {
+        if (destroyed) {
+            return;
+        }
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        final CharSequence[] items = {
+                "🔤 " + getString(R.string.MediaFeedFilterWords),
+                "💬 Comments",
+                getString(R.string.Cancel)
+        };
+        builder.setItems(items, (dialog, which) -> {
+            if (which == 0) {
+                manageFilterWords();
+            } else if (which == 1) {
+                showComments();
+            }
+        });
+        builder.show();
+    }
+
+    private void showComments() {
+        if (destroyed) {
+            return;
+        }
+        Utilities.stageQueue.postRunnable(() -> {
+            final java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+            final java.util.ArrayList<Integer> ids = new java.util.ArrayList<>();
+            try {
+                JSONArray comments = MediaFeedServerApi.getInstance().adminComments();
+                for (int i = 0; i < comments.length(); i++) {
+                    JSONObject c = comments.optJSONObject(i);
+                    if (c == null) continue;
+                    ids.add((int) c.optLong("id"));
+                    long uid = c.optLong("user_id");
+                    long vid = c.optLong("video_id");
+                    String text = c.optString("text");
+                    String label = "#" + c.optLong("id") + " · v" + vid + " · u" + uid + "\n  " + text;
+                    labels.add(label);
+                }
+            } catch (Exception ignore) {
+            }
+            if (labels.isEmpty()) {
+                labels.add(getString(R.string.MediaFeedNoComments));
+            }
+            AndroidUtilities.runOnUIThread(() -> {
+                if (destroyed) {
+                    return;
+                }
+                final AlertDialog.Builder builder = new AlertDialog.Builder(MediaAdminActivity.this);
+                builder.setTitle("💬 " + getString(R.string.MediaFeedComments));
+                builder.setItems(labels.toArray(new CharSequence[0]), (dialog, which) -> {
+                    if (which >= 0 && which < ids.size()) {
+                        final int commentId = ids.get(which);
+                        final AlertDialog.Builder confirm = new AlertDialog.Builder(MediaAdminActivity.this);
+                        confirm.setTitle(getString(R.string.MediaFeedDeleteComment));
+                        confirm.setMessage(labels.get(which));
+                        confirm.setPositiveButton(getString(R.string.Delete), (d, w) ->
+                                Utilities.stageQueue.postRunnable(() -> {
+                                    try {
+                                        MediaFeedServerApi.getInstance().adminDeleteComment(commentId);
+                                    } catch (Exception ignore) {
+                                    }
+                                }));
+                        confirm.setNegativeButton(getString(R.string.Cancel), null);
+                        confirm.show();
+                    }
+                });
+                builder.setNegativeButton(getString(R.string.Close), null);
+                builder.show();
+            });
+        });
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (adapter != null) {
+            adapter.notifyDataSetChanged();
+        }
     }
 
     private void manageFilterWords() {

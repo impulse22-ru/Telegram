@@ -27,10 +27,10 @@ func (r *usersRepo) Upsert(ctx context.Context, u User) (int64, error) {
 
 func (r *usersRepo) GetByTgID(ctx context.Context, tgID int64) (*User, error) {
 	row := r.pg.QueryRow(ctx, `
-		SELECT id, tg_user_id, COALESCE(phone,''), COALESCE(name,''), role, created_at
+		SELECT id, tg_user_id, COALESCE(phone,''), COALESCE(name,''), role, banned, created_at
 		FROM users WHERE tg_user_id = $1`, tgID)
 	var u User
-	if err := row.Scan(&u.ID, &u.TgUserID, &u.Phone, &u.Name, &u.Role, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.TgUserID, &u.Phone, &u.Name, &u.Role, &u.Banned, &u.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -38,10 +38,10 @@ func (r *usersRepo) GetByTgID(ctx context.Context, tgID int64) (*User, error) {
 
 func (r *usersRepo) Get(ctx context.Context, id int64) (*User, error) {
 	row := r.pg.QueryRow(ctx, `
-		SELECT id, tg_user_id, COALESCE(phone,''), COALESCE(name,''), role, created_at
+		SELECT id, tg_user_id, COALESCE(phone,''), COALESCE(name,''), role, banned, created_at
 		FROM users WHERE id = $1`, id)
 	var u User
-	if err := row.Scan(&u.ID, &u.TgUserID, &u.Phone, &u.Name, &u.Role, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.TgUserID, &u.Phone, &u.Name, &u.Role, &u.Banned, &u.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -49,6 +49,11 @@ func (r *usersRepo) Get(ctx context.Context, id int64) (*User, error) {
 
 func (r *usersRepo) SetRole(ctx context.Context, id int64, role string) error {
 	_, err := r.pg.Exec(ctx, `UPDATE users SET role=$2 WHERE id=$1`, id, role)
+	return err
+}
+
+func (r *usersRepo) SetBanned(ctx context.Context, id int64, banned bool) error {
+	_, err := r.pg.Exec(ctx, `UPDATE users SET banned=$2 WHERE id=$1`, id, banned)
 	return err
 }
 
