@@ -13,6 +13,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -39,6 +40,7 @@ public class MediaFeedActivity extends Activity {
     private boolean destroyed;
     private long feedOffset;
     private boolean feedLoading;
+    private boolean searchMode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,6 +86,17 @@ public class MediaFeedActivity extends Activity {
 
         root.addView(list, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         root.addView(loading, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        TextView searchBtn = new TextView(this);
+        searchBtn.setText("🔍");
+        searchBtn.setTextSize(20f);
+        searchBtn.setTextColor(0xffffffff);
+        searchBtn.setBackgroundResource(R.drawable.bg_media_feed_btn);
+        searchBtn.setGravity(Gravity.CENTER);
+        searchBtn.setPadding(AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4));
+        searchBtn.setOnClickListener(v -> openSearchDialog());
+        root.addView(searchBtn, LayoutHelper.createFrame(AndroidUtilities.dp(44), AndroidUtilities.dp(44), Gravity.TOP | Gravity.END, 0, AndroidUtilities.dp(16), AndroidUtilities.dp(16), 0));
+
         setContentView(root);
 
         loadFeed(() -> AndroidUtilities.runOnUIThread(() -> loading.setVisibility(View.GONE)));
@@ -121,11 +134,65 @@ public class MediaFeedActivity extends Activity {
 
     private void loadFeed(Runnable onDone) {
         feedOffset = 0;
+        searchMode = false;
         loadPage(true, onDone);
     }
 
     private void loadMore() {
+        if (searchMode) {
+            return;
+        }
         loadPage(false, null);
+    }
+
+    private void openSearchDialog() {
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        final EditText editText = new EditText(this);
+        editText.setHint(getString(R.string.MediaFeedSearchHint));
+        editText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        editText.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+        editText.setSingleLine(false);
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(editText, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER, 16, 16, 16, 16));
+        builder.setTitle(getString(R.string.MediaFeedSearch));
+        builder.setView(frame);
+        builder.setPositiveButton(getString(R.string.Search), (dialog, which) -> {
+            final String q = editText.getText().toString().trim();
+            if (!q.isEmpty()) {
+                runSearch(q);
+            }
+        });
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        builder.show();
+    }
+
+    private void runSearch(final String query) {
+        if (feedLoading) {
+            return;
+        }
+        feedLoading = true;
+        searchMode = true;
+        Utilities.stageQueue.postRunnable(() -> {
+            try {
+                MediaFeedServerApi api = MediaFeedServerApi.getInstance();
+                JSONArray videos = api.search(query);
+                AndroidUtilities.runOnUIThread(() -> {
+                    feedLoading = false;
+                    if (destroyed) {
+                        return;
+                    }
+                    if (adapter != null) {
+                        adapter.setVideos(videos);
+                    }
+                    feedOffset = 0;
+                });
+            } catch (Exception ignore) {
+                AndroidUtilities.runOnUIThread(() -> {
+                    feedLoading = false;
+                    AndroidUtilities.shakeView(getWindow().getDecorView());
+                });
+            }
+        });
     }
 
     private void loadPage(final boolean first, final Runnable onDone) {

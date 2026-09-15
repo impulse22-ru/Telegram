@@ -144,6 +144,34 @@ func (s *Server) handleAdminVideoUnban(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"unbanned": true})
 }
 
+// DELETE /v1/admin/videos/{id} — мягкое удаление видео.
+func (s *Server) handleAdminVideoDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if err := s.repos.Videos.Delete(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+}
+
+// DELETE /v1/admin/comments/{id} — удаление комментария.
+func (s *Server) handleAdminCommentDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if err := s.repos.Engagements.DeleteComment(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+}
+
 // POST /v1/admin/shops/{id}/suspend
 func (s *Server) handleAdminShopSuspend(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

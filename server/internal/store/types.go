@@ -174,6 +174,7 @@ type Videos interface {
 	GetByTgMsg(ctx context.Context, channelID, tgMsgID int64) (*Video, error)
 	Ban(ctx context.Context, id int64) error
 	Unban(ctx context.Context, id int64) error
+	Delete(ctx context.Context, id int64) error
 	Get(ctx context.Context, id int64) (*Video, error)
 	Count(ctx context.Context, status string) (int64, error)
 }
@@ -214,6 +215,7 @@ type Engagements interface {
 	CountLikes(ctx context.Context, videoID int64) (int64, error)
 	Comment(ctx context.Context, userID, videoID int64, text string, parentID int64) (int64, error)
 	Comments(ctx context.Context, videoID int64, limit int64) ([]Comment, error)
+	DeleteComment(ctx context.Context, commentID int64) error
 	Report(ctx context.Context, userID, videoID int64, reason string) error
 	Reports(ctx context.Context, status string, limit int64) ([]Report, error)
 	ReportResolve(ctx context.Context, id int64, status string) error

@@ -45,6 +45,11 @@ func (r *engagementsRepo) Comment(ctx context.Context, userID, videoID int64, te
 	return id, err
 }
 
+func (r *engagementsRepo) DeleteComment(ctx context.Context, commentID int64) error {
+	_, err := r.pg.Exec(ctx, `DELETE FROM comments WHERE id=$1`, commentID)
+	return err
+}
+
 func (r *engagementsRepo) Comments(ctx context.Context, videoID, limit int64) ([]Comment, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, user_id, video_id, text, COALESCE(parent_id,0), created_at

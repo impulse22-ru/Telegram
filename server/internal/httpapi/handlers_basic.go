@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"tgcloud/server/internal/store"
 )
@@ -123,4 +124,28 @@ func (s *Server) handleVideoGet(w http.ResponseWriter, r *http.Request) {
 		"views": views,
 		"liked": liked,
 	})
+}
+
+// GET /v1/search?q=... — поиск видео по title/caption (аналог !search).
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"videos": []store.Video{}, "query": ""})
+		return
+	}
+	limit := int64(20)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if l, err := strconv.ParseInt(v, 10, 64); err == nil && l > 0 && l <= 50 {
+			limit = l
+		}
+	}
+	videos, err := s.repos.Videos.Search(r.Context(), q, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if videos == nil {
+		videos = []store.Video{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"videos": videos, "query": q})
 }

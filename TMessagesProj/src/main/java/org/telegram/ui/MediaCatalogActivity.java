@@ -288,6 +288,74 @@ public class MediaCatalogActivity extends Activity {
             rebuildFromShop(shopItem);
         }
 
+        void promptCreateProduct(final ListItem shopItem) {
+            if (shopItem.shopId == 0) {
+                return;
+            }
+            final long shopId = shopItem.shopId;
+            final AlertDialog.Builder builder = new AlertDialog.Builder(MediaCatalogActivity.this);
+            LinearLayout content = new LinearLayout(MediaCatalogActivity.this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
+
+            final EditText titleIn = new EditText(MediaCatalogActivity.this);
+            titleIn.setHint(getString(R.string.MediaFeedProductTitle));
+            titleIn.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            titleIn.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+            content.addView(titleIn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            final EditText descIn = new EditText(MediaCatalogActivity.this);
+            descIn.setHint(getString(R.string.MediaFeedShopDescHint));
+            descIn.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            descIn.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+            content.addView(descIn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            final EditText priceIn = new EditText(MediaCatalogActivity.this);
+            priceIn.setHint(getString(R.string.MediaFeedProductPrice));
+            priceIn.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+            priceIn.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            priceIn.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+            content.addView(priceIn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            final EditText curIn = new EditText(MediaCatalogActivity.this);
+            curIn.setHint("RUB");
+            curIn.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            curIn.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+            content.addView(curIn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            builder.setTitle(getString(R.string.MediaFeedNewProduct));
+            builder.setView(content);
+            builder.setPositiveButton(getString(R.string.OK), (dialog, which) -> {
+                final String title = titleIn.getText().toString().trim();
+                if (title.isEmpty()) {
+                    return;
+                }
+                final String description = descIn.getText().toString();
+                final double price;
+                try {
+                    price = Double.parseDouble(priceIn.getText().toString());
+                } catch (Exception ignore) {
+                    return;
+                }
+                final String currency = curIn.getText().toString().trim().isEmpty() ? "RUB" : curIn.getText().toString().trim();
+                Utilities.stageQueue.postRunnable(() -> {
+                    try {
+                        MediaFeedServerApi.getInstance().createProduct(shopId, title, description, price, currency, null);
+                        JSONObject resp = MediaFeedServerApi.getInstance().shop((int) shopId);
+                        AndroidUtilities.runOnUIThread(() -> {
+                            if (!destroyed) {
+                                setShopProducts(resp);
+                            }
+                        });
+                    } catch (Exception ignore) {
+                        AndroidUtilities.runOnUIThread(() -> AndroidUtilities.shakeView(getWindow().getDecorView()));
+                    }
+                });
+            });
+            builder.setNegativeButton(getString(R.string.Cancel), null);
+            builder.show();
+        }
+
         void toggleSubscription(final ListItem shopItem) {
             if (shopItem.shopId == 0) {
                 return;
@@ -540,6 +608,8 @@ public class MediaCatalogActivity extends Activity {
                     ? getString(R.string.MediaFeedUnsubscribe)
                     : getString(R.string.MediaFeedSubscribe), (dialog, which) ->
                     adapter.toggleSubscription(it));
+            builder.setNeutralButton("+ " + getString(R.string.MediaFeedNewProduct), (dialog, which) ->
+                    adapter.promptCreateProduct(it));
             builder.setNegativeButton(getString(R.string.Cancel), null);
             builder.show();
         }

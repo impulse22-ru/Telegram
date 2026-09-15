@@ -154,6 +154,18 @@ func (s *Server) handleOrderCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	order := store.Order{
+		ID:             id,
+		ShopID:         product.ShopID,
+		BuyerID:        claims.UserID,
+		ProductID:      product.ID,
+		Quantity:       req.Quantity,
+		PriceAmount:    product.PriceAmount * float64(req.Quantity),
+		PriceCurrency:  product.PriceCurrency,
+		PaymentStatus:  "pending",
+		ContactDetails: req.ContactDetails,
+	}
+	s.notifyOrder(r.Context(), &order, "created")
 	writeJSON(w, http.StatusCreated, map[string]any{"order_id": id})
 }
 

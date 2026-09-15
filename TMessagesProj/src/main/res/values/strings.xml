@@ -11249,4 +11249,8 @@
     <string name="MediaFeedShopTitleHint">Shop title</string>
     <string name="MediaFeedShopDescHint">Description</string>
     <string name="MediaFeedShopPaymentHint">Payment details</string>
+    <string name="MediaFeedSearch">Search videos</string>
+    <string name="MediaFeedSearchHint">Search query</string>
+    <string name="MediaFeedNewProduct">New product</string>
+    <string name="MediaFeedProductTitle">Product title</string>
 </resources>

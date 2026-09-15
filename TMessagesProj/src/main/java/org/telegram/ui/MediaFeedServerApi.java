@@ -102,6 +102,11 @@ public class MediaFeedServerApi {
         return resp.optBoolean("has_more", false);
     }
 
+    public JSONArray search(String q) throws Exception {
+        JSONObject resp = request("GET", "/v1/search?q=" + java.net.URLEncoder.encode(q, "UTF-8"), null, token);
+        return resp.optJSONArray("videos");
+    }
+
     public void like(long videoId) throws Exception {
         request("POST", "/v1/videos/" + videoId + "/like", new JSONObject(), token);
     }
@@ -261,6 +266,14 @@ public class MediaFeedServerApi {
 
     public void adminUnbanVideo(int videoId) throws Exception {
         request("POST", "/v1/admin/videos/" + videoId + "/unban", new JSONObject(), token);
+    }
+
+    public void adminDeleteVideo(int videoId) throws Exception {
+        request("DELETE", "/v1/admin/videos/" + videoId, null, token);
+    }
+
+    public void adminDeleteComment(int commentId) throws Exception {
+        request("DELETE", "/v1/admin/comments/" + commentId, null, token);
     }
 
     public void adminSuspendShop(int shopId) throws Exception {

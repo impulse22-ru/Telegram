@@ -37,6 +37,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/auth/telegram", s.handleAuthTelegram)
 
 	mux.HandleFunc("GET /v1/feed", s.authMW(s.handleFeed))
+	mux.HandleFunc("GET /v1/search", s.authMW(s.handleSearch))
 	mux.HandleFunc("GET /v1/videos/{id}", s.authMW(s.handleVideoGet))
 	mux.HandleFunc("GET /v1/videos/{id}/stats", s.authMW(s.handleVideoStats))
 	mux.HandleFunc("POST /v1/videos/{id}/like", s.authMW(s.rlMW(s.handleLike)))
@@ -78,6 +79,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/admin/reports/{id}/status", s.authMW(s.adminMW(s.handleAdminReportStatus)))
 	mux.HandleFunc("POST /v1/admin/videos/{id}/ban", s.authMW(s.adminMW(s.handleAdminVideoBan)))
 	mux.HandleFunc("POST /v1/admin/videos/{id}/unban", s.authMW(s.adminMW(s.handleAdminVideoUnban)))
+	mux.HandleFunc("DELETE /v1/admin/videos/{id}", s.authMW(s.adminMW(s.handleAdminVideoDelete)))
+	mux.HandleFunc("DELETE /v1/admin/comments/{id}", s.authMW(s.adminMW(s.handleAdminCommentDelete)))
 	mux.HandleFunc("POST /v1/admin/shops/{id}/suspend", s.authMW(s.adminMW(s.handleAdminShopSuspend)))
 	mux.HandleFunc("GET /v1/admin/filter-words", s.authMW(s.adminMW(s.handleFilterWordsList)))
 	mux.HandleFunc("POST /v1/admin/filter-word", s.authMW(s.adminMW(s.handleFilterWordAdd)))

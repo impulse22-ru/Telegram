@@ -56,6 +56,11 @@ func (r *videosRepo) Unban(ctx context.Context, id int64) error {
 	return err
 }
 
+func (r *videosRepo) Delete(ctx context.Context, id int64) error {
+	_, err := r.pg.Exec(ctx, `UPDATE videos SET status='deleted' WHERE id=$1`, id)
+	return err
+}
+
 // Search — поиск по title/caption (для команды !search в боте).
 func (r *videosRepo) Search(ctx context.Context, q string, limit int64) ([]Video, error) {
 	if limit <= 0 {

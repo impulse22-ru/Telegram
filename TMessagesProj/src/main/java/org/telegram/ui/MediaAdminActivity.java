@@ -302,6 +302,7 @@ public class MediaAdminActivity extends Activity {
                             }
                             refresh();
                         }));
+                builder.setNegativeButton(getString(R.string.Cancel), null);
             } else if (item.isTop) {
                 builder.setPositiveButton("🚫 Ban", (dialog, which) ->
                         Utilities.stageQueue.postRunnable(() -> {
@@ -319,8 +320,25 @@ public class MediaAdminActivity extends Activity {
                             }
                             refresh();
                         }));
+                builder.setNegativeButton("🗑 Delete", (dialog, which) ->
+                        Utilities.stageQueue.postRunnable(() -> {
+                            try {
+                                MediaFeedServerApi.getInstance().adminDeleteVideo(videoId);
+                            } catch (Exception ignore) {
+                            }
+                            refresh();
+                        }));
+            } else {
+                builder.setPositiveButton("🚫 Ban", (dialog, which) ->
+                        Utilities.stageQueue.postRunnable(() -> {
+                            try {
+                                MediaFeedServerApi.getInstance().adminBanVideo(videoId);
+                            } catch (Exception ignore) {
+                            }
+                            refresh();
+                        }));
+                builder.setNegativeButton(getString(R.string.Cancel), null);
             }
-            builder.setNegativeButton(getString(R.string.Cancel), null);
             builder.show();
         }
 
