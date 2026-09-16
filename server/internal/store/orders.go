@@ -8,8 +8,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// shopsRepo — реализация Shops на pgxpool.
 type shopsRepo struct{ pg *pgxpool.Pool }
 
+// Create — создаёт новый магазин; статус по умолчанию "active" если не задан.
 func (r *shopsRepo) Create(ctx context.Context, s Shop) (int64, error) {
 	var id int64
 	if s.Status == "" {
@@ -22,6 +24,7 @@ func (r *shopsRepo) Create(ctx context.Context, s Shop) (int64, error) {
 	return id, err
 }
 
+// List — возвращает все активные магазины, отсортированные по id.
 func (r *shopsRepo) List(ctx context.Context) ([]Shop, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, owner_id, tg_chat_id, title, COALESCE(description,''),
@@ -33,6 +36,7 @@ func (r *shopsRepo) List(ctx context.Context) ([]Shop, error) {
 	return scanShops(rows)
 }
 
+// ListForOwner — возвращает все магазины конкретного владельца (включая suspended).
 func (r *shopsRepo) ListForOwner(ctx context.Context, ownerID int64) ([]Shop, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, owner_id, tg_chat_id, title, COALESCE(description,''),
@@ -44,6 +48,7 @@ func (r *shopsRepo) ListForOwner(ctx context.Context, ownerID int64) ([]Shop, er
 	return scanShops(rows)
 }
 
+// scanShops — общий сканер строк в срез Shop; используется List и ListForOwner.
 func scanShops(rows interface {
 	Next() bool
 	Scan(...any) error
@@ -62,6 +67,7 @@ func scanShops(rows interface {
 	return out, rows.Err()
 }
 
+// Get — возвращает магазин по ID.
 func (r *shopsRepo) Get(ctx context.Context, id int64) (*Shop, error) {
 	var s Shop
 	err := r.pg.QueryRow(ctx, `
@@ -87,11 +93,13 @@ func (r *shopsRepo) GetByTgChatID(ctx context.Context, tgChatID int64) (*Shop, e
 	return &s, nil
 }
 
+// Suspend — приостанавливает магазин (меняет статус на 'suspended').
 func (r *shopsRepo) Suspend(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `UPDATE shops SET status='suspended' WHERE id=$1`, id)
 	return err
 }
 
+// Update — частично обновляет поля магазина; пустые строки означают «без изменений» (COALESCE + NULLIF).
 func (r *shopsRepo) Update(ctx context.Context, id int64, title, description, paymentInfo, imageURL string) error {
 	_, err := r.pg.Exec(ctx, `
 		UPDATE shops SET
@@ -103,11 +111,13 @@ func (r *shopsRepo) Update(ctx context.Context, id int64, title, description, pa
 	return err
 }
 
+// Delete — физически удаляет магазин из БД.
 func (r *shopsRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `DELETE FROM shops WHERE id=$1`, id)
 	return err
 }
 
+// Search — поиск магазинов по title/description (ILIKE, регистронезависимый).
 func (r *shopsRepo) Search(ctx context.Context, q string) ([]Shop, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, owner_id, tg_chat_id, COALESCE(title,''), COALESCE(description,''),
@@ -132,8 +142,10 @@ func (r *shopsRepo) Search(ctx context.Context, q string) ([]Shop, error) {
 
 var _ Shops = (*shopsRepo)(nil)
 
+// productsRepo — реализация Products на pgxpool.
 type productsRepo struct{ pg *pgxpool.Pool }
 
+// Insert — создаёт/обновляет товар; ON CONFLICT обновляет все поля по (shop_id, tg_msg_id).
 func (r *productsRepo) Insert(ctx context.Context, p Product) error {
 	_, err := r.pg.Exec(ctx, `
 		INSERT INTO products (shop_id, tg_msg_id, file_id, title, description, price_amount, price_currency, category, image_url, status, posted_at)
@@ -146,6 +158,7 @@ func (r *productsRepo) Insert(ctx context.Context, p Product) error {
 	return err
 }
 
+// ListByShop — товары конкретного магазина со статусом 'on_sale', по возрастанию id.
 func (r *productsRepo) ListByShop(ctx context.Context, shopID int64) ([]Product, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, shop_id, tg_msg_id, file_id, title, COALESCE(description,''),
@@ -164,6 +177,7 @@ func (r *productsRepo) ListAllActive(ctx context.Context, limit int64, category 
 		limit = 50
 	}
 	if category != "" {
+		// Фильтрация по категории: JOIN с таблицей shops для проверки статуса магазина.
 		rows, err := r.pg.Query(ctx, `
 		SELECT p.id, p.shop_id, p.tg_msg_id, p.file_id, p.title, COALESCE(p.description,''),
 		       p.price_amount, p.price_currency, COALESCE(p.category,''), COALESCE(p.image_url,''), p.status, p.posted_at
@@ -176,6 +190,7 @@ func (r *productsRepo) ListAllActive(ctx context.Context, limit int64, category 
 		defer rows.Close()
 		return scanProducts(rows)
 	}
+	// Без фильтра по категории — все товары из активных магазинов.
 	rows, err := r.pg.Query(ctx, `
 		SELECT p.id, p.shop_id, p.tg_msg_id, p.file_id, p.title, COALESCE(p.description,''),
 		       p.price_amount, p.price_currency, COALESCE(p.category,''), COALESCE(p.image_url,''), p.status, p.posted_at
@@ -189,6 +204,7 @@ func (r *productsRepo) ListAllActive(ctx context.Context, limit int64, category 
 	return scanProducts(rows)
 }
 
+// scanProducts — общий сканер строк в срез Product; используется ListByShop и ListAllActive.
 func scanProducts(rows interface {
 	Next() bool
 	Scan(...any) error
@@ -198,7 +214,7 @@ func scanProducts(rows interface {
 	out := make([]Product, 0)
 	for rows.Next() {
 		var p Product
-if err := rows.Scan(&p.ID, &p.ShopID, &p.TgMsgID, &p.FileID, &p.Title, &p.Description,
+		if err := rows.Scan(&p.ID, &p.ShopID, &p.TgMsgID, &p.FileID, &p.Title, &p.Description,
 			&p.PriceAmount, &p.PriceCurrency, &p.Category, &p.ImageURL, &p.Status, &p.PostedAt); err != nil {
 			return nil, err
 		}
@@ -207,6 +223,7 @@ if err := rows.Scan(&p.ID, &p.ShopID, &p.TgMsgID, &p.FileID, &p.Title, &p.Descri
 	return out, rows.Err()
 }
 
+// Get — возвращает товар по ID.
 func (r *productsRepo) Get(ctx context.Context, id int64) (*Product, error) {
 	var p Product
 	err := r.pg.QueryRow(ctx, `
@@ -221,23 +238,27 @@ func (r *productsRepo) Get(ctx context.Context, id int64) (*Product, error) {
 	return &p, nil
 }
 
+// RecordView — записывает просмотр товара пользователем (для аналитики продавца).
 func (r *productsRepo) RecordView(ctx context.Context, userID, productID int64) error {
 	_, err := r.pg.Exec(ctx, `
 		INSERT INTO product_views (user_id, product_id) VALUES ($1,$2)`, userID, productID)
 	return err
 }
 
+// CountViews — считает общее количество просмотров товара.
 func (r *productsRepo) CountViews(ctx context.Context, productID int64) (int64, error) {
 	var n int64
 	err := r.pg.QueryRow(ctx, `SELECT count(*) FROM product_views WHERE product_id=$1`, productID).Scan(&n)
 	return n, err
 }
 
+// Hide — скрывает товар (меняет статус на 'hidden'), не удаляя из БД.
 func (r *productsRepo) Hide(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `UPDATE products SET status='hidden' WHERE id=$1`, id)
 	return err
 }
 
+// Update — частично обновляет поля товара; пустые строки — «без изменений» (COALESCE + NULLIF).
 func (r *productsRepo) Update(ctx context.Context, id int64, title, description string, price float64, currency, category, imageURL string) error {
 	_, err := r.pg.Exec(ctx, `
 		UPDATE products SET
@@ -251,17 +272,21 @@ func (r *productsRepo) Update(ctx context.Context, id int64, title, description 
 	return err
 }
 
+// Delete — физически удаляет товар из БД.
 func (r *productsRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `DELETE FROM products WHERE id=$1`, id)
-return err
+	return err
 }
 
 var _ Products = (*productsRepo)(nil)
 
+// ordersRepo — реализация Orders на pgxpool.
 type ordersRepo struct{ pg *pgxpool.Pool }
 
+// orderCols — список колонок для SELECT заказов (используется в Get/ByBuyer/ByShop).
 const orderCols = `id, shop_id, buyer_id, product_id, quantity, price_amount, price_currency, payment_status, COALESCE(contact_details,''), created_at, updated_at`
 
+// Create — создаёт новый заказ; статус по умолчанию "pending" если не задан.
 func (r *ordersRepo) Create(ctx context.Context, o Order) (int64, error) {
 	var id int64
 	if o.PaymentStatus == "" {
@@ -274,6 +299,7 @@ func (r *ordersRepo) Create(ctx context.Context, o Order) (int64, error) {
 	return id, err
 }
 
+// Get — возвращает заказ по ID.
 func (r *ordersRepo) Get(ctx context.Context, id int64) (*Order, error) {
 	var o Order
 	err := r.pg.QueryRow(ctx, `SELECT `+orderCols+` FROM orders WHERE id=$1`, id).
@@ -285,18 +311,21 @@ func (r *ordersRepo) Get(ctx context.Context, id int64) (*Order, error) {
 	return &o, nil
 }
 
+// ByBuyer — заказы покупателя с пагинацией (новые первыми).
 func (r *ordersRepo) ByBuyer(ctx context.Context, buyerID int64, limit int64, offset int64) ([]Order, error) {
 	return r.list(ctx, `
 		SELECT `+orderCols+`
 		FROM orders WHERE buyer_id=$1 ORDER BY id DESC LIMIT $2 OFFSET $3`, buyerID, limit, offset)
 }
 
+// ByShop — заказы магазина с пагинацией (новые первыми).
 func (r *ordersRepo) ByShop(ctx context.Context, shopID int64, limit int64, offset int64) ([]Order, error) {
 	return r.list(ctx, `
 		SELECT `+orderCols+`
 		FROM orders WHERE shop_id=$1 ORDER BY id DESC LIMIT $2 OFFSET $3`, shopID, limit, offset)
 }
 
+// list — общий метод выполнения SELECT запроса к заказам; конвертирует []int64 аргументы в []any для pgx.
 func (r *ordersRepo) list(ctx context.Context, sql string, args ...int64) ([]Order, error) {
 	anyArgs := make([]any, len(args))
 	for i, a := range args {
@@ -320,6 +349,7 @@ func (r *ordersRepo) list(ctx context.Context, sql string, args ...int64) ([]Ord
 	return out, rows.Err()
 }
 
+// SetStatus — меняет статус оплаты заказа и обновляет updated_at.
 func (r *ordersRepo) SetStatus(ctx context.Context, id int64, status string) error {
 	_, err := r.pg.Exec(ctx, `UPDATE orders SET payment_status=$2, updated_at=now() WHERE id=$1`, id, status)
 	return err
@@ -328,6 +358,7 @@ func (r *ordersRepo) SetStatus(ctx context.Context, id int64, status string) err
 // SetChatLink создаёт/обновляет запись order_chat_link для заказа.
 func (r *ordersRepo) SetChatLink(ctx context.Context, orderID, tgChatID int64) (int64, error) {
 	var id int64
+	// UPSERT: если link для заказа уже есть — обновляем tg_chat_id.
 	err := r.pg.QueryRow(ctx, `
 		INSERT INTO order_chat_link (order_id, tg_chat_id)
 		VALUES ($1,$2)
@@ -341,6 +372,7 @@ func (r *ordersRepo) GetChatLink(ctx context.Context, orderID int64) (int64, boo
 	var chatID int64
 	err := r.pg.QueryRow(ctx, `SELECT tg_chat_id FROM order_chat_link WHERE order_id=$1`, orderID).Scan(&chatID)
 	if err != nil {
+		// ErrNoRows — ссылки нет, это штатная ситуация (не ошибка).
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, nil
 		}

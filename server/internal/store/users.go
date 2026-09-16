@@ -6,8 +6,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// usersRepo — реализация Users на pgxpool.
 type usersRepo struct{ pg *pgxpool.Pool }
 
+// upsertUserSQL — SQL шаблон для upsert пользователя: создаёт нового или обновляет phone/name у существующего.
 const upsertUserSQL = `
 INSERT INTO users (tg_user_id, phone, name, role)
 VALUES ($1, $2, $3, 'user')
@@ -16,6 +18,7 @@ ON CONFLICT (tg_user_id) DO UPDATE SET
 	name  = EXCLUDED.name
 RETURNING id`
 
+// Upsert — создаёт/обновляет пользователя по tg_user_id; role по умолчанию "user".
 func (r *usersRepo) Upsert(ctx context.Context, u User) (int64, error) {
 	var id int64
 	if u.Role == "" {
@@ -25,6 +28,7 @@ func (r *usersRepo) Upsert(ctx context.Context, u User) (int64, error) {
 	return id, err
 }
 
+// GetByTgID — возвращает пользователя по Telegram user ID.
 func (r *usersRepo) GetByTgID(ctx context.Context, tgID int64) (*User, error) {
 	row := r.pg.QueryRow(ctx, `
 		SELECT id, tg_user_id, COALESCE(phone,''), COALESCE(name,''), role, banned, created_at
@@ -36,6 +40,7 @@ func (r *usersRepo) GetByTgID(ctx context.Context, tgID int64) (*User, error) {
 	return &u, nil
 }
 
+// Get — возвращает пользователя по внутреннему ID.
 func (r *usersRepo) Get(ctx context.Context, id int64) (*User, error) {
 	row := r.pg.QueryRow(ctx, `
 		SELECT id, tg_user_id, COALESCE(phone,''), COALESCE(name,''), role, banned, created_at
@@ -47,11 +52,13 @@ func (r *usersRepo) Get(ctx context.Context, id int64) (*User, error) {
 	return &u, nil
 }
 
+// SetRole — устанавливает роль пользователя (user / admin / seller).
 func (r *usersRepo) SetRole(ctx context.Context, id int64, role string) error {
 	_, err := r.pg.Exec(ctx, `UPDATE users SET role=$2 WHERE id=$1`, id, role)
 	return err
 }
 
+// SetBanned — бан/разбан пользователя.
 func (r *usersRepo) SetBanned(ctx context.Context, id int64, banned bool) error {
 	_, err := r.pg.Exec(ctx, `UPDATE users SET banned=$2 WHERE id=$1`, id, banned)
 	return err

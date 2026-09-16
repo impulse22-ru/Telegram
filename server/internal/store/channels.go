@@ -6,14 +6,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// channelsRepo — реализация Channels на pgxpool.
 type channelsRepo struct{ pg *pgxpool.Pool }
 
-// EnsureByTgChatID возвращает id канала, создавая запись при отсутствии.
+// EnsureByTgChatID — upsert канала по tg_chat_id: создаёт запись при отсутствии, обновляет title если он непустой.
 func (r *channelsRepo) EnsureByTgChatID(ctx context.Context, tgChatID int64, kind, title string) (int64, error) {
 	var id int64
 	if kind == "" {
 		kind = "feed"
 	}
+	// ON CONFLICT: если канал уже есть — обновляем title только если новый непустой (NULLIF + COALESCE).
 	err := r.pg.QueryRow(ctx, `
 		INSERT INTO channels (tg_chat_id, title, kind)
 		VALUES ($1, $2, $3)
@@ -23,6 +25,7 @@ func (r *channelsRepo) EnsureByTgChatID(ctx context.Context, tgChatID int64, kin
 	return id, err
 }
 
+// GetByTgChatID — возвращает канал по его Telegram chat ID.
 func (r *channelsRepo) GetByTgChatID(ctx context.Context, tgChatID int64) (*Channel, error) {
 	var ch Channel
 	err := r.pg.QueryRow(ctx, `

@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 )
 
-// POST /v1/upload — загрузка изображения (multipart field "file").
+// handleUpload — POST /v1/upload. Загрузка изображения (multipart field "file").
 // Возвращает {url: "/uploads/<name>"}. Размер ограничен 8 МБ.
+// Имя файла — случайное hex-значение (криптографический rand) + ".jpg":
+// исключает коллизии и обход пути через пользовательские имена.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeErr(w, http.StatusBadRequest, "multipart required")
@@ -23,11 +25,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Создаём директорию загрузок при необходимости (она может отсутствовать).
 	if err := os.MkdirAll(s.uploadDir, 0o755); err != nil {
 		writeErr(w, http.StatusInternalServerError, "no storage")
 		return
 	}
 
+	// 16 hex-символов (8 случайных байт) достаточно, чтобы избежать предсказуемых имён.
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		writeErr(w, http.StatusInternalServerError, "no entropy")

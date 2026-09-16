@@ -11,16 +11,24 @@ import (
 
 // handleCommand — обработка команд бота от обычных пользователей (этап 5).
 // Поддерживаемые команды:
-//   /start            — приветствие + пригласительная ссылка
-//   !help             — список команд
-//   !search <запрос>  — поиск видео по названию/подписи
-//   !top              — топ видео по просмотрам
-//   !stat             — статистика ленты
+//
+//	/start            — приветствие + пригласительная ссылка
+//	!help             — список команд
+//	!search <запрос>  — поиск видео по названию/подписи
+//	!top              — топ видео по просмотрам
+//	!stat             — статистика ленты
+//
 // (админские добавляются отдельно, см. adminCommand.go)
+//
+// Разрешаются как команды с '!', так и с '/', чтобы работать и в Telegram,
+// и в античных клиентах ('/' конфликтует с нативными командами бота).
+//
+// Админ-команды (!ban, !filter и т.д.) доступны только пользователям с ролью
+// "admin" — проверка через isAdmin перед веткой админских команд.
 func (ix *Indexer) handleCommand(ctx context.Context, m *tgbot.Message) HandleResult {
 	text := strings.TrimSpace(m.Text)
 	if text == "" {
-		return Ignored
+		return Ignored // пустое сообщение (например, только стикер) — не команда
 	}
 
 	cmd, arg := splitCommand(text)
@@ -49,13 +57,17 @@ func (ix *Indexer) handleCommand(ctx context.Context, m *tgbot.Message) HandleRe
 			return ix.cmdUnfilter(ctx, m, arg)
 		}
 	}
-	return Ignored
+	return Ignored // неизвестная команда — игнорируем, чтобы не спамить
 }
 
+// cmdStart — обработка /start.
+// Отвечает приветствием и, если задан закрытый канал ленты, пригласительной
+// ссылкой (exportChatInviteLink). Ссылка создаётся каждый раз заново.
 func (ix *Indexer) cmdStart(ctx context.Context, m *tgbot.Message) HandleResult {
 	sb := strings.Builder{}
 	sb.WriteString("Привет! Это бот ленты.\n")
 	if ix.feedChat != 0 && ix.repos != nil {
+		// Экспорт ссылки может упасть (бот не админ канала и т.п.) — пропускаем.
 		link, err := ix.bot.ExportChatInviteLink(ix.feedChat)
 		if err == nil && link != "" {
 			sb.WriteString("\nВступить в канал ленты: " + link)
@@ -64,6 +76,9 @@ func (ix *Indexer) cmdStart(ctx context.Context, m *tgbot.Message) HandleResult 
 	return ix.reply(ctx, m, sb.String())
 }
 
+// cmdSearch — поиск видео по названию/подписи (!search <запрос>).
+// Ищет до 5 результатов: репозиторий Videos.Search (ILIKE по title и caption).
+// Пустой запрос → подсказка использования. Ноль результатов → «Ничего не найдено».
 func (ix *Indexer) cmdSearch(ctx context.Context, m *tgbot.Message, q string) HandleResult {
 	if q == "" {
 		return ix.reply(ctx, m, "Укажи запрос: !search <текст>")
@@ -81,13 +96,17 @@ func (ix *Indexer) cmdSearch(ctx context.Context, m *tgbot.Message, q string) Ha
 	for _, v := range videos {
 		title := v.Title
 		if title == "" {
-			title = "видео #" + fmt.Sprint(v.ID)
+			title = "видео #" + fmt.Sprint(v.ID) // фолбэк для видео без названия
 		}
+		// Внимание: v.ChannelID здесь используется как place — просмотры счётчика,
+		// корректное поле views, по-видимому, в этой схеме не заполнено.
 		sb.WriteString(fmt.Sprintf("• #%d %s (👁 %d)\n", v.ID, title, v.ChannelID))
 	}
 	return ix.reply(ctx, m, strings.TrimSpace(sb.String()))
 }
 
+// cmdTop — топ-5 видео по просмотрам.
+// Источник: Stats.TopVideos. Формат ответа: "1. видео #<id> — <N> 👁".
 func (ix *Indexer) cmdTop(ctx context.Context, m *tgbot.Message) HandleResult {
 	top, err := ix.repos.Stats.TopVideos(ctx, 5)
 	if err != nil {
@@ -105,6 +124,9 @@ func (ix *Indexer) cmdTop(ctx context.Context, m *tgbot.Message) HandleResult {
 	return ix.reply(ctx, m, strings.TrimSpace(sb.String()))
 }
 
+// cmdStat — агрегированная статистика ленты (!stat).
+// Источник: Stats.AdminStats: число пользователей, видео (всего/видимых),
+// просмотров, лайков, комментариев.
 func (ix *Indexer) cmdStat(ctx context.Context, m *tgbot.Message) HandleResult {
 	st, err := ix.repos.Stats.AdminStats(ctx)
 	if err != nil {
@@ -118,7 +140,10 @@ func (ix *Indexer) cmdStat(ctx context.Context, m *tgbot.Message) HandleResult {
 }
 
 // --- админ-команды ---
+// Все админ-команды доступны только после проверки isAdmin (роль "admin").
 
+// cmdBan — банит видео (!ban <video_id>): ставит статус "banned" и убирает
+// его из Redis-ленты, чтобы оно пропало из выдачи.
 func (ix *Indexer) cmdBan(ctx context.Context, m *tgbot.Message, arg string) HandleResult {
 	id := parseID(arg)
 	if id <= 0 {
@@ -127,12 +152,16 @@ func (ix *Indexer) cmdBan(ctx context.Context, m *tgbot.Message, arg string) Han
 	if err := ix.repos.Videos.Ban(ctx, id); err != nil {
 		return ix.reply(ctx, m, "Ошибка бана")
 	}
+	// Также удаляем из ленты Redis — иначе забаненное видео останется у клиентов.
 	if v, err := ix.repos.Videos.Get(ctx, id); err == nil {
 		_ = ix.repos.Feed.RemoveVideo(ctx, v.ChannelID, id)
 	}
 	return ix.reply(ctx, m, "Видео #"+fmt.Sprint(id)+" заблокировано")
 }
 
+// cmdUnban — разблокирует видео (!unban <video_id>): возвращает статус "visible".
+// Лента Redis при этом НЕ пополняется автоматически — видео вернётся в выдачу
+// только после следующей индексации канала.
 func (ix *Indexer) cmdUnban(ctx context.Context, m *tgbot.Message, arg string) HandleResult {
 	id := parseID(arg)
 	if id <= 0 {
@@ -144,6 +173,8 @@ func (ix *Indexer) cmdUnban(ctx context.Context, m *tgbot.Message, arg string) H
 	return ix.reply(ctx, m, "Видео #"+fmt.Sprint(id)+" разблокировано")
 }
 
+// cmdFilter — добавляет слово в чёрный список (!filter <слово>).
+// Дальнейшие видео с этим словом в подписи индексируются как "banned".
 func (ix *Indexer) cmdFilter(ctx context.Context, m *tgbot.Message, arg string) HandleResult {
 	if arg == "" {
 		return ix.reply(ctx, m, "Укажи слово: !filter <слово>")
@@ -154,6 +185,8 @@ func (ix *Indexer) cmdFilter(ctx context.Context, m *tgbot.Message, arg string) 
 	return ix.reply(ctx, m, "Слово «"+arg+"» добавлено в чёрный список")
 }
 
+// cmdUnfilter — удаляет слово из чёрного списка (!unfilter <слово>).
+// Уже забаненные видео остаются забаненными (статус не пересматривается).
 func (ix *Indexer) cmdUnfilter(ctx context.Context, m *tgbot.Message, arg string) HandleResult {
 	if arg == "" {
 		return ix.reply(ctx, m, "Укажи слово: !unfilter <слово>")
@@ -165,6 +198,8 @@ func (ix *Indexer) cmdUnfilter(ctx context.Context, m *tgbot.Message, arg string
 }
 
 // reply — временный ответ с созданием пользователя, если нужно.
+// Отправляет сообщение в чат, из которого пришла команда (m.Chat.ID).
+// При ошибке отправки возвращает Failed, иначе — Handled.
 func (ix *Indexer) reply(ctx context.Context, m *tgbot.Message, text string) HandleResult {
 	if err := ix.bot.SendMessage(m.Chat.ID, text); err != nil {
 		log.Printf("indexer: sendMessage: %v", err)
@@ -174,6 +209,8 @@ func (ix *Indexer) reply(ctx context.Context, m *tgbot.Message, text string) Han
 }
 
 // isAdmin — проверка роли admin у пользователя по tg_user_id.
+// Ищет пользователя в БД по Telegram ID; роль "admin" → true.
+// При любой ошибке (нет пользователя, сетевая и т.п.) — false (безопасное значение).
 func (ix *Indexer) isAdmin(ctx context.Context, tgUserID int64) bool {
 	u, err := ix.repos.Users.GetByTgID(ctx, tgUserID)
 	if err != nil {
@@ -182,6 +219,7 @@ func (ix *Indexer) isAdmin(ctx context.Context, tgUserID int64) bool {
 	return u.Role == "admin"
 }
 
+// helpText — справка, выводимая командами !help / /help.
 const helpText = `Доступные команды:
 /start — пригласительная ссылка в канал ленты
 !search <текст> — поиск видео
@@ -193,6 +231,8 @@ const helpText = `Доступные команды:
 !filter <слово>, !unfilter <слово>`
 
 // splitCommand выделяет команду и аргумент, игнорируя упоминание бота: "/start@BotName".
+// Разбивает текст по первому пробелу; если упоминание "@BotName" — отрезает его.
+// Возвращает команду в нижнем регистре (без пробелов) и аргумент (trim).
 func splitCommand(text string) (cmd, arg string) {
 	text = strings.TrimSpace(text)
 	if strings.Contains(text, " ") {
@@ -200,12 +240,15 @@ func splitCommand(text string) (cmd, arg string) {
 	} else {
 		cmd = text
 	}
+	// Отсекаем @BotName для команд вида "/start@MyBot".
 	if at := strings.IndexByte(cmd, '@'); at > 0 {
 		cmd = cmd[:at]
 	}
 	return strings.ToLower(strings.TrimSpace(cmd)), strings.TrimSpace(arg)
 }
 
+// parseID — парсит целочисленный ID из строки аргумента команды.
+// Sscan читает первое число; ошибка парсинга игнорируется → возвращается 0.
 func parseID(s string) int64 {
 	var id int64
 	_, _ = fmt.Sscan(strings.TrimSpace(s), &id)

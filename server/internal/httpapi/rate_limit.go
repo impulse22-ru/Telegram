@@ -6,6 +6,8 @@ import (
 )
 
 // rateLimiter — простой скользящий лимит: не более burst событий в минуту на пользователя.
+// Хранит время начала текущего окна (last) и число разрешённых событий в нём (allowed)
+// в двух параллельных map, защищённых одним mutex'ом.
 type rateLimiter struct {
 	mu      sync.Mutex
 	last    map[int64]time.Time
@@ -14,6 +16,7 @@ type rateLimiter struct {
 	allowed map[int64]int
 }
 
+// newRateLimiter — конструктор: окно 1 минута, лимит 60 событий на пользователя.
 func newRateLimiter() *rateLimiter {
 	return &rateLimiter{
 		window:  time.Minute,
@@ -24,6 +27,8 @@ func newRateLimiter() *rateLimiter {
 }
 
 // Allow решает, можно ли пользователю выполнить действие сейчас.
+// Если окно (window) ещё не истекло — сравниваем число событий с burst;
+// если истекло/окна нет — открываем новое окно и разрешаем первое событие.
 func (r *rateLimiter) Allow(userID int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

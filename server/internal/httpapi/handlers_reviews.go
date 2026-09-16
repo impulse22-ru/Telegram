@@ -8,7 +8,9 @@ import (
 	"tgcloud/server/internal/store"
 )
 
-// POST /v1/product/{id}/review — оставить/обновить отзыв.
+// handleReviewAdd — POST /v1/product/{id}/review. Оставить или обновить отзыв на товар
+// (authMW + rlMW). Rating обязателен (1..5), текст опционален.
+// После добавления возвращает обновлённые avg-rating и количество отзывов.
 func (s *Server) handleReviewAdd(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	productID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -24,6 +26,7 @@ func (s *Server) handleReviewAdd(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
+	// Валидация рейтинга: допустим диапазон 1..5.
 	if req.Rating < 1 || req.Rating > 5 {
 		writeErr(w, http.StatusBadRequest, "rating must be 1..5")
 		return
@@ -38,11 +41,13 @@ func (s *Server) handleReviewAdd(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	// После добавления пересчитываем средний рейтинг — клиент обновит UI.
 	avg, count, _ := s.repos.Reviews.AvgRating(r.Context(), productID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "avg": avg, "count": count})
 }
 
-// GET /v1/product/{id}/reviews — отзывы о товаре.
+// handleReviewsByProduct — GET /v1/product/{id}/reviews. Список отзывов о товаре
+// (authMW, без rlMW). Возвращает массив reviews, средний рейтинг avg и количество.
 func (s *Server) handleReviewsByProduct(w http.ResponseWriter, r *http.Request) {
 	productID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {

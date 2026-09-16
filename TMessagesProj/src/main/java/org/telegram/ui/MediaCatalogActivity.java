@@ -31,12 +31,22 @@ import org.telegram.ui.Components.RadialProgressView;
 import java.util.ArrayList;
 
 // Витрина/каталог: магазины → товары → заказ (этапы 6–7).
+// Экран каталога магазинов и товаров с подписками и заказами.
+// Через заголовок доступны: все магазины, подписки пользователя,
+// мои магазины (создание/редактирование/удаление, own-флаг владельца),
+// заказы покупателя и заказы продавца (подтверждение), поиск магазинов
+// и статистика. Заказ товара, отзывы (1–5) и чат по заказу.
 public class MediaCatalogActivity extends Activity {
 
+    /** ID текущего аккаунта Telegram (для Multi-Account) */
     private final int currentAccount = UserConfig.selectedAccount;
+    /** Флаг: Activity уничтожена — все callback'и на UI проверяют его */
     private boolean destroyed;
+    /** Список (RecyclerView), в который выводятся элементы каталога */
     private RecyclerView list;
+    /** LayoutManager вертикального списка */
     private LinearLayoutManager layoutManager;
+    /** Адаптер, который держит текущий набор элементов (магазины/товары/заказы) */
     private CatalogAdapter adapter;
 
     @Override
@@ -53,6 +63,7 @@ public class MediaCatalogActivity extends Activity {
         header.setOrientation(LinearLayout.VERTICAL);
         header.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
 
+        // Клик по заголовку "MediaFeed" показывает статистику пользователя.
         TextView title = new TextView(this);
         title.setText(getString(R.string.MediaFeed));
         title.setTextSize(18f);
@@ -63,6 +74,8 @@ public class MediaCatalogActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
 
+        // Кнопки-переключатели: подписки, мои магазины, мои заказы,
+        // заказы продавца (входящие заказы покупателей).
         TextView subscriptions = button(getString(R.string.MediaFeedSubscriptions), v -> showSubscriptions());
         TextView myShops = button(getString(R.string.MediaFeedMyShops), v -> showMyShops());
         TextView myOrders = button(getString(R.string.MediaFeedMyOrders), v -> showOrders(false));
@@ -73,14 +86,17 @@ public class MediaCatalogActivity extends Activity {
         row.addView(mySales);
         header.addView(row);
 
+        // Создание нового магазина (вызывается только в меню "мои магазины").
         TextView createShopText = button(getString(R.string.MediaFeedCreateShop), v -> promptCreateShop());
         header.addView(createShopText);
 
+        // Поиск магазинов по названию.
         TextView searchText = button("🔍 Search", v -> showShopSearch());
         header.addView(searchText);
 
         root.addView(header, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
 
+        // Список: высота оставляет место под фиксированный заголовок.
         list = new RecyclerView(this);
         layoutManager = new LinearLayoutManager(this);
         list.setLayoutManager(layoutManager);
@@ -88,10 +104,12 @@ public class MediaCatalogActivity extends Activity {
         list.setAdapter(adapter);
         root.addView(list, LayoutHelper.createFrameMarginPx(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP, 0, AndroidUtilities.dp(96), 0, 0));
 
+        // Спиннер поверх списка, скрывается после первой загрузки.
         RadialProgressView loading = new RadialProgressView(this);
         root.addView(loading, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
         setContentView(root);
 
+        // Стартовая загрузка: показываем все магазины.
         Utilities.stageQueue.postRunnable(() -> {
             try {
                 JSONArray shops = MediaFeedServerApi.getInstance().shops();
@@ -111,11 +129,13 @@ public class MediaCatalogActivity extends Activity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        // При повороте/изменении конфигурации перерисовываем список.
         if (adapter != null) {
             adapter.notifyDataSetChanged();
         }
     }
 
+    /** Создание текстовой кнопки заголовка (стиль "ссылки" с цветом темы). */
     private TextView button(String text, View.OnClickListener onClick) {
         TextView tv = new TextView(this);
         tv.setText(text);
@@ -126,6 +146,8 @@ public class MediaCatalogActivity extends Activity {
         return tv;
     }
 
+    /** Показ личной статистики: просмотры, время просмотра, лайки, комменты,
+     *  подписки — плюс продажи продавца (заказы, подтверждённые, выручка). */
     private void showMyStats() {
         Utilities.stageQueue.postRunnable(() -> {
             final StringBuilder sb = new StringBuilder();
@@ -161,6 +183,8 @@ public class MediaCatalogActivity extends Activity {
         });
     }
 
+    /** Показ заказов: mine=false — мои покупки, mine=true — заказы продавца.
+     *  Во втором случае у заказа появляется кнопка подтверждения (extra). */
     private void showOrders(final boolean mine) {
         Utilities.stageQueue.postRunnable(() -> {
             JSONArray arr;
@@ -177,11 +201,14 @@ public class MediaCatalogActivity extends Activity {
                 if (destroyed) {
                     return;
                 }
+                // Передаём флаг mine адаптеру: он помечает "это заказ продавца".
                 adapter.setOrders(orders, mine);
             });
         });
     }
 
+    /** Показ магазинов, на которые подписан пользователь: берём все магазины
+     *  и фильтруем по списку id подписок (tg_chat_id). */
     private void showSubscriptions() {
         Utilities.stageQueue.postRunnable(() -> {
             try {
@@ -192,6 +219,7 @@ public class MediaCatalogActivity extends Activity {
                 for (int i = 0; i < channelIds.length(); i++) {
                     subs.add(channelIds.optLong(i));
                 }
+                // Фильтруем магазины: оставляем только те, чей канал в подписках.
                 JSONArray filtered = new JSONArray();
                 if (allShops != null) {
                     for (int i = 0; i < allShops.length(); i++) {
@@ -212,6 +240,7 @@ public class MediaCatalogActivity extends Activity {
         });
     }
 
+    /** Показ магазинов текущего пользователя (через API myShops). */
     private void showMyShops() {
         Utilities.stageQueue.postRunnable(() -> {
             try {
@@ -226,6 +255,7 @@ public class MediaCatalogActivity extends Activity {
         });
     }
 
+    /** Диалог поиска магазинов по названию. */
     private void showShopSearch() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         final EditText input = new EditText(this);
@@ -241,6 +271,7 @@ public class MediaCatalogActivity extends Activity {
             if (q.isEmpty()) {
                 return;
             }
+            // Отправляем запрос в фоне, результат — список магазинов.
             Utilities.stageQueue.postRunnable(() -> {
                 try {
                     JSONArray found = MediaFeedServerApi.getInstance().searchShops(q);
@@ -258,6 +289,8 @@ public class MediaCatalogActivity extends Activity {
         builder.show();
     }
 
+    /** Диалог создания нового магазина: название, описание, платёжные реквизиты.
+     *  После создания автоматически переходим в "мои магазины". */
     private void promptCreateShop() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         LinearLayout content = new LinearLayout(this);
@@ -291,6 +324,7 @@ public class MediaCatalogActivity extends Activity {
             final String pay = paymentInput.getText().toString();
             Utilities.stageQueue.postRunnable(() -> {
                 try {
+                    // Автосоздание магазина (канал создаётся на сервере).
                     MediaFeedServerApi.getInstance().createShopAuto(title, desc, pay, null);
                     JSONArray shops = MediaFeedServerApi.getInstance().myShops();
                     AndroidUtilities.runOnUIThread(() -> {
@@ -305,18 +339,27 @@ public class MediaCatalogActivity extends Activity {
         builder.show();
     }
 
+    /** Адаптер каталога: хранит текущий режим отображения (shops / products /
+     *  orders) в полях shops/products и строит из них список ListItem.
+     *  Занимается открытием магазина/товара, CRUD магазинов и товаров,
+     *  подписками и созданием заказов. */
     private class CatalogAdapter extends RecyclerView.Adapter<CatalogHolder> {
 
+        /** Текущий список элементов для RecyclerView (пересобирается rebuild'ами) */
         private final ArrayList<ListItem> items = new ArrayList<>();
+        /** Актуальный список магазинов (режим "каталог магазинов") */
         private JSONArray shops;
+        /** Актуальный список товаров (режим "магазин с товарами") */
         private JSONArray products;
 
+        /** Показ списка магазинов: очищает товары, пересобирает items. */
         void setShops(JSONArray list) {
             this.shops = list;
             this.products = null;
             rebuild();
         }
 
+        /** Показ всех магазинов (кнопка "магазины") с сервера. */
         void showShops() {
             Utilities.stageQueue.postRunnable(() -> {
                 try {
@@ -332,9 +375,13 @@ public class MediaCatalogActivity extends Activity {
             });
         }
 
+        /** Переход в режим "товары магазина": первым элементом идёт заголовок
+         *  магазина (head=true), далее его товары. Считаем own-флаг —
+         *  владелец ли магазина текущий пользователь. */
         void setShopProducts(JSONObject shopResp) {
             shops = null;
             products = shopResp.optJSONArray("products");
+            // Заголовок магазина вверху списка товаров.
             ListItem shopItem = new ListItem();
             shopItem.head = true;
             shopItem.shopId = shopResp.optJSONObject("shop") != null
@@ -344,6 +391,7 @@ public class MediaCatalogActivity extends Activity {
             shopItem.subtitle = "👁 " + (shopResp.optJSONObject("shop") != null
                     ? shopResp.optJSONObject("shop").optString("payment_info") : "");
             shopItem.subscribed = shopResp.optBoolean("subscribed");
+            // Сравниваем owner_id магазина с ID текущего пользователя.
             if (shopResp.optJSONObject("shop") != null) {
                 JSONObject shop = shopResp.optJSONObject("shop");
                 final long ownerId = shop.optLong("owner_id");
@@ -353,6 +401,8 @@ public class MediaCatalogActivity extends Activity {
             rebuildFromShop(shopItem);
         }
 
+        /** Диалог редактирования магазина (название/описание/реквизиты) —
+         *  доступен только владельцу (own). После сохранения открываем магазин. */
         void promptEditShop(final ListItem shopItem) {
             if (shopItem.shopId == 0) {
                 return;
@@ -408,6 +458,7 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Подтверждение удаления магазина; после удаления показываем список магазинов. */
         void confirmDeleteShop(final ListItem shopItem) {
             if (shopItem.shopId == 0) {
                 return;
@@ -433,6 +484,7 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Диалог редактирования товара (название/описание/цена) — own-tовар. */
         void promptEditProduct(final ListItem p) {
             if (p.productId == 0) {
                 return;
@@ -493,6 +545,7 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Подтверждение удаления товара; затем переоткрываем магазин. */
         void confirmDeleteProduct(final ListItem p) {
             if (p.productId == 0) {
                 return;
@@ -518,6 +571,7 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Диалог создания нового товара в своём магазине (own). */
         void promptCreateProduct(final ListItem shopItem) {
             if (shopItem.shopId == 0) {
                 return;
@@ -567,6 +621,7 @@ public class MediaCatalogActivity extends Activity {
                 } catch (Exception ignore) {
                     return;
                 }
+                // Валюта по умолчанию RUB, если поле пустое.
                 final String currency = curIn.getText().toString().trim().isEmpty() ? "RUB" : curIn.getText().toString().trim();
                 Utilities.stageQueue.postRunnable(() -> {
                     try {
@@ -586,6 +641,8 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Тоггл подписки на магазин: шлём subscribe/unsubscribe на сервер,
+         *  после успеха обновляем подпись магазина в списке. */
         void toggleSubscription(final ListItem shopItem) {
             if (shopItem.shopId == 0) {
                 return;
@@ -601,6 +658,7 @@ public class MediaCatalogActivity extends Activity {
                     }
                     AndroidUtilities.runOnUIThread(() -> {
                         if (destroyed) return;
+                        // Меняем состояние уже после успешного ответа сервера.
                         shopItem.subscribed = !wasSubscribed;
                         updateShopSubtitle(shopItem);
                     });
@@ -610,10 +668,13 @@ public class MediaCatalogActivity extends Activity {
             });
         }
 
+        /** Обновление второй строки магазина: добавляем/убираем статус
+         *  "подписан / отписаться". */
         private void updateShopSubtitle(ListItem shopItem) {
             String status = shopItem.subscribed ? getString(R.string.MediaFeedSubscribed)
                     : getString(R.string.MediaFeedUnsubscribe);
             if (shopItem.subtitle != null && shopItem.subtitle.length() > 2) {
+                // Берём первую строку подписи и дописываем статус новой строкой.
                 String base = shopItem.subtitle;
                 int idx = base.indexOf("\n");
                 if (idx > 0) {
@@ -626,6 +687,9 @@ public class MediaCatalogActivity extends Activity {
             notifyDataSetChanged();
         }
 
+        /** Показ заказов: mine=false — покупки пользователя (кнопка "оплатить"),
+         *  mine=true — заказы продавца (кнопка "подтвердить"). Формируем ListItem
+         *  с бейджем статуса (paid/confirmed/cancelled/новый). */
         void setOrders(JSONArray orders, boolean mine) {
             this.shops = null;
             this.products = null;
@@ -638,6 +702,7 @@ public class MediaCatalogActivity extends Activity {
                     it.orderId = o.optLong("id");
                     it.title = "Заказ #" + it.orderId;
                     String status = o.optString("payment_status");
+                    // Бейдж статуса заказа: цветная эмодзи + текст статуса.
                     String badge;
                     switch (status == null ? "" : status) {
                         case "paid": badge = "💳 " + status; break;
@@ -648,6 +713,7 @@ public class MediaCatalogActivity extends Activity {
                     it.subtitle = badge
                             + " — " + o.optDouble("price_amount", 0) + " "
                             + o.optString("price_currency");
+                    // extra=true означает "заказ продавца" (можно подтвердить).
                     it.extra = mine;
                     items.add(it);
                 }
@@ -655,6 +721,7 @@ public class MediaCatalogActivity extends Activity {
             notifyDataSetChanged();
         }
 
+        /** Сборка списка из shops: каждый магазин — ListItem с head=true. */
         void rebuild() {
             items.clear();
             if (shops != null) {
@@ -664,6 +731,7 @@ public class MediaCatalogActivity extends Activity {
                     ListItem it = new ListItem();
                     it.shopId = s.optLong("id");
                     it.title = s.optString("title");
+                    // Подпись: платёжная информация + статус магазина.
                     it.subtitle = "💰 " + s.optString("payment_info") + "\n" + s.optString("status");
                     it.head = true;
                     items.add(it);
@@ -672,6 +740,8 @@ public class MediaCatalogActivity extends Activity {
             notifyDataSetChanged();
         }
 
+        /** Сборка списка: первый элемент — заголовок магазина, далее товары.
+         *  own-флаг пробрасывается на все товары магазина. */
         void rebuildFromShop(ListItem shopItem) {
             items.clear();
             items.add(shopItem);
@@ -684,6 +754,7 @@ public class MediaCatalogActivity extends Activity {
                     it.shopId = shopItem.shopId;
                     it.owned = shopItem.owned;
                     it.title = p.optString("title");
+                    // Подпись товара: цена + валюта + описание.
                     it.subtitle = "💰 " + p.optDouble("price_amount", 0) + " "
                             + p.optString("price_currency") + "\n" + p.optString("description");
                     items.add(it);
@@ -692,6 +763,7 @@ public class MediaCatalogActivity extends Activity {
             notifyDataSetChanged();
         }
 
+        /** Открытие магазина по id: грузим shop()-ответ и показываем товары. */
         void openShop(long shopId) {
             Utilities.stageQueue.postRunnable(() -> {
                 try {
@@ -706,7 +778,10 @@ public class MediaCatalogActivity extends Activity {
             });
         }
 
+        /** Диалог заказа товара: просмотр информации, счётчик просмотра товара,
+         *  поле контакта и количества, кнопки "купить" и "отзыв". */
         void openProduct(ListItem p) {
+            // Увеличиваем счётчик просмотров товара на сервере.
             if (p.productId != 0) {
                 final int pid = (int) p.productId;
                 Utilities.stageQueue.postRunnable(() -> {
@@ -719,18 +794,21 @@ public class MediaCatalogActivity extends Activity {
             final AlertDialog.Builder builder = new AlertDialog.Builder(MediaCatalogActivity.this);
             LinearLayout content = new LinearLayout(MediaCatalogActivity.this);
             content.setOrientation(LinearLayout.VERTICAL);
+            // Информация о товаре: название + подпись (цена/описание).
             TextView info = new TextView(MediaCatalogActivity.this);
             info.setTextSize(15f);
             info.setText(p.title + "\n" + p.subtitle);
             info.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
             content.addView(info, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+            // Контакт покупателя (передаётся в заказ).
             final EditText contact = new EditText(MediaCatalogActivity.this);
             contact.setHint(getString(R.string.MediaFeedContact));
             contact.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
             contact.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
             content.addView(contact, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+            // Количество единиц товара (по умолчанию 1).
             final EditText qty = new EditText(MediaCatalogActivity.this);
             qty.setInputType(InputType.TYPE_CLASS_NUMBER);
             qty.setText("1");
@@ -749,10 +827,12 @@ public class MediaCatalogActivity extends Activity {
                 final String contactText = contact.getText().toString();
                 Utilities.stageQueue.postRunnable(() -> {
                     try {
+                        // Создаём заказ; цена берётся сервером, клиент передаёт 0.
                         MediaFeedServerApi.getInstance().createOrder((int) p.productId, q,
                                 priceOf(p), contactText);
                         AndroidUtilities.runOnUIThread(() -> {
                             if (!destroyed) {
+                                // После заказа показываем "мои заказы" (покупательская вкладка).
                                 showOrders(false);
                             }
                         });
@@ -762,12 +842,14 @@ public class MediaCatalogActivity extends Activity {
                 });
             });
             builder.setNegativeButton(getString(R.string.Cancel), null);
+            // Отдельная кнопка "отзыв" на товар (звезда).
             builder.setNeutralButton("⭐ " + getString(R.string.MediaFeedReview), (dialog, which) -> {
                 promptReview(p);
             });
             builder.show();
         }
 
+        /** Диалог отзыва на товар: оценка 1–5 и текст. */
         private void promptReview(final ListItem p) {
             final int pid = (int) p.productId;
             final AlertDialog.Builder builder = new AlertDialog.Builder(MediaCatalogActivity.this);
@@ -796,6 +878,7 @@ public class MediaCatalogActivity extends Activity {
                 } catch (Exception ignore) {
                     return;
                 }
+                // Валидация оценки: только 1..5.
                 if (r < 1 || r > 5) {
                     return;
                 }
@@ -811,6 +894,7 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Цена передаётся 0: сервер сам подставляет цену товара. */
         private double priceOf(ListItem p) {
             return 0; // цена берётся сервером из товара
         }
@@ -823,6 +907,7 @@ public class MediaCatalogActivity extends Activity {
 
         @Override
         public void onBindViewHolder(@NonNull CatalogHolder holder, int position) {
+            // Привязка: title/subtitle текущего элемента к TextView холдера.
             holder.bind(items.get(position));
         }
 
@@ -832,18 +917,22 @@ public class MediaCatalogActivity extends Activity {
         }
     }
 
+    /** Модель одного элемента списка каталога (магазин / товар / заказ).
+     *  Тип определяется по заполненным id: shopId / productId / orderId. */
     private class ListItem {
-        long shopId;
-        long productId;
-        long orderId;
-        boolean head;
-        boolean subscribed;
-        boolean owned;
-        String title;
-        String subtitle;
+        long shopId;        // id магазина (магазин или заголовок в товарах)
+        long productId;     // id товара
+        long orderId;       // id заказа
+        boolean head;       // true = это заголовок магазина в списке товаров
+        boolean subscribed; // подписан ли пользователь на магазин
+        boolean owned;      // владелец ли магазина текущий пользователь
+        String title;       // заголовок строки
+        String subtitle;    // вторая строка (статус/цена/описание)
         boolean extra; // true = заказ продавца (можно подтвердить)
     }
 
+    /** Холдер строки каталога: две строки (title + subtitle).
+     *  Обработка кликов: что открыть в зависимости от типа элемента. */
     private class CatalogHolder extends RecyclerView.ViewHolder {
 
         private final TextView title;
@@ -856,11 +945,13 @@ public class MediaCatalogActivity extends Activity {
             row.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(10), AndroidUtilities.dp(12), AndroidUtilities.dp(10));
             row.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+            // Первая строка — заголовок элемента (название магазина/товара/заказа).
             title = new TextView(row.getContext());
             title.setTextSize(16f);
             title.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
             row.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+            // Вторая строка — подпись (платёжные данные, статус, цена и т.п.).
             subtitle = new TextView(row.getContext());
             subtitle.setTextSize(13f);
             subtitle.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
@@ -869,6 +960,10 @@ public class MediaCatalogActivity extends Activity {
             row.setOnClickListener(v -> onClick());
         }
 
+        /** Маршрутизация клика по типу элемента:
+         *  заголовок магазина в товарах — меню подписки/управления;
+         *  магазин — открыть его товары; товар — купить или меню (если own);
+         *  заказ — действия по заказу. */
         private void onClick() {
             int pos = getAdapterPosition();
             if (pos < 0 || pos >= adapter.items.size()) {
@@ -879,18 +974,23 @@ public class MediaCatalogActivity extends Activity {
                 // Заголовок магазина в деталях: показать подписку/отписку.
                 openShopSubscribeDialog(it);
             } else if (it.shopId != 0) {
+                // Обычный магазин в каталоге: открыть список товаров.
                 adapter.openShop(it.shopId);
             } else if (it.productId != 0) {
+                // Свой товар — меню (купить/редактировать/удалить), чужой — купить.
                 if (it.owned) {
                     openOwnedProductMenu(it);
                 } else {
                     adapter.openProduct(it);
                 }
             } else if (it.orderId != 0) {
+                // Заказ: диалог действий (оплатить/подтвердить/чат/отмена).
                 openOrderActions(it);
             }
         }
 
+        /** Меню действий для собственного товара (own): купить,
+         *  редактировать или удалить. */
         private void openOwnedProductMenu(final ListItem it) {
             final java.util.ArrayList<String> actions = new java.util.ArrayList<>();
             final java.util.ArrayList<Runnable> runs = new java.util.ArrayList<>();
@@ -901,6 +1001,7 @@ public class MediaCatalogActivity extends Activity {
             actions.add("🗑 " + getString(R.string.MediaFeedDeleteProduct));
             runs.add(() -> adapter.confirmDeleteProduct(it));
 
+            // setItems: список действий (строки) → соответствующие Runnable.
             final AlertDialog.Builder builder = new AlertDialog.Builder(MediaCatalogActivity.this);
             builder.setTitle(it.title);
             builder.setItems(actions.toArray(new CharSequence[0]), (dialog, which) -> {
@@ -912,6 +1013,8 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Меню заголовка магазина: подписка/отписка, создание товара;
+         *  для владельца (own) добавляются редактирование и удаление магазина. */
         private void openShopSubscribeDialog(final ListItem it) {
             final java.util.ArrayList<String> actions = new java.util.ArrayList<>();
             final java.util.ArrayList<Runnable> runs = new java.util.ArrayList<>();
@@ -921,6 +1024,7 @@ public class MediaCatalogActivity extends Activity {
             runs.add(() -> adapter.toggleSubscription(it));
             actions.add("+ " + getString(R.string.MediaFeedNewProduct));
             runs.add(() -> adapter.promptCreateProduct(it));
+            // Пункты управления магазином доступны только его владельцу.
             if (it.owned) {
                 actions.add("✏ " + getString(R.string.MediaFeedEditShop));
                 runs.add(() -> adapter.promptEditShop(it));
@@ -939,6 +1043,9 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Действия по заказу: для заказа продавца (extra) — "подтвердить",
+         *  для покупки — "оплатил", плюс общий "чат с покупателем/продавцом"
+         *  и "отменить заказ". */
         private void openOrderActions(final ListItem it) {
             final AlertDialog.Builder builder = new AlertDialog.Builder(MediaCatalogActivity.this);
             TextView info = new TextView(MediaCatalogActivity.this);
@@ -949,6 +1056,7 @@ public class MediaCatalogActivity extends Activity {
             builder.setTitle(getString(R.string.MediaFeedOrders));
 
             if (it.extra) {
+                // Заказ пришёл продавцу — он подтверждает выполнение.
                 builder.setPositiveButton(getString(R.string.MediaFeedConfirm), (dialog, which) -> {
                     Utilities.stageQueue.postRunnable(() -> {
                         try {
@@ -958,6 +1066,7 @@ public class MediaCatalogActivity extends Activity {
                     });
                 });
             } else {
+                // Покупка покупателя — он отмечает, что оплатил.
                 builder.setPositiveButton(getString(R.string.MediaFeedPaid), (dialog, which) -> {
                     Utilities.stageQueue.postRunnable(() -> {
                         try {
@@ -967,6 +1076,7 @@ public class MediaCatalogActivity extends Activity {
                     });
                 });
             }
+            // Получение ссылки на чат по заказу (tg_chat_id / peer).
             builder.setNeutralButton(getString(R.string.MediaFeedChat), (dialog, which) -> {
                 Utilities.stageQueue.postRunnable(() -> {
                     try {
@@ -998,6 +1108,7 @@ public class MediaCatalogActivity extends Activity {
             builder.show();
         }
 
+        /** Привязка данных: заголовок в первую строку, подпись — во вторую. */
         void bind(ListItem it) {
             title.setText(it.title);
             subtitle.setText(it.subtitle != null ? it.subtitle : "");
@@ -1007,6 +1118,7 @@ public class MediaCatalogActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        // Помечаем Activity уничтоженной, чтобы отбросить поздние UI-вызовы.
         destroyed = true;
     }
 }

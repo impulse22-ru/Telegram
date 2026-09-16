@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// statsRepo — реализация Stats на pgxpool: агрегаты, аналитика, дашборды.
 type statsRepo struct{ pg *pgxpool.Pool }
 
 // VideoViewsDay — просмотры видео по дням за последние N дней.
@@ -13,6 +14,7 @@ func (r *statsRepo) VideoViewsDay(ctx context.Context, videoID int64, days int) 
 	if days <= 0 {
 		days = 7
 	}
+	// date_trunc('day', ...) группирует по суткам; uniques — через count(DISTINCT user_id).
 	rows, err := r.pg.Query(ctx, `
 		SELECT date_trunc('day', created_at)::date AS day, count(*) AS views, count(DISTINCT user_id) AS uniques
 		FROM views_log
@@ -37,6 +39,7 @@ func (r *statsRepo) VideoViewsDay(ctx context.Context, videoID int64, days int) 
 // VideoStat — агрегированная статистика по одному видео.
 func (r *statsRepo) VideoStat(ctx context.Context, videoID int64) (*VideoStat, error) {
 	var v VideoStat
+	// Один запрос считает 4 подзапроса: views, uniques, likes, avg_watch.
 	err := r.pg.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM views_log vl WHERE vl.video_id=$1) AS views,
@@ -72,12 +75,14 @@ func (r *statsRepo) TopVideos(ctx context.Context, limit int64) ([]VideoStat, er
 		if err := rows.Scan(&v.VideoID, &v.Views, &v.Uniques, &v.AvgWatchSeconds); err != nil {
 			return nil, err
 		}
+		// Лайки считаем отдельным запросом — их нет в views_log.
 		v.Likes, _ = r.countLikes(ctx, v.VideoID)
 		out = append(out, v)
 	}
 	return out, rows.Err()
 }
 
+// countLikes — вспомогательный метод для подсчёта лайков одного видео (используется в TopVideos).
 func (r *statsRepo) countLikes(ctx context.Context, videoID int64) (int64, error) {
 	var n int64
 	err := r.pg.QueryRow(ctx, `SELECT count(*) FROM likes WHERE video_id=$1`, videoID).Scan(&n)
@@ -87,6 +92,7 @@ func (r *statsRepo) countLikes(ctx context.Context, videoID int64) (int64, error
 // UserStats — персональная статистика пользователя.
 func (r *statsRepo) UserStats(ctx context.Context, userID int64) (*UserStats, error) {
 	var s UserStats
+	// Пять подзапросов: просмотры, суммарное время, лайки, комментарии, подписки.
 	err := r.pg.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM views_log WHERE user_id=$1),
@@ -104,6 +110,8 @@ func (r *statsRepo) UserStats(ctx context.Context, userID int64) (*UserStats, er
 // AdminStats — общий дашборд.
 func (r *statsRepo) AdminStats(ctx context.Context) (*AdminStats, error) {
 	var s AdminStats
+	// Агрегация по всем таблицам: пользователи, видео, просмотры, лайки, комментарии,
+	// жалобы, магазины, товары, заказы, выручка (только confirmed).
 	err := r.pg.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM users) AS users,
@@ -128,6 +136,7 @@ func (r *statsRepo) AdminStats(ctx context.Context) (*AdminStats, error) {
 // SellerStats — аналитика продавца: заказы, выручка, топ товаров.
 func (r *statsRepo) SellerStats(ctx context.Context, ownerID int64) (*SellerStats, error) {
 	var s SellerStats
+	// Агрегация по всем магазинам продавца (JOIN shops) + подсчёт просмотров товаров.
 	err := r.pg.QueryRow(ctx, `
 		SELECT
 			(SELECT count(o.*) FROM orders o JOIN shops sh ON sh.id=o.shop_id WHERE sh.owner_id=$1) AS orders,
@@ -140,6 +149,7 @@ func (r *statsRepo) SellerStats(ctx context.Context, ownerID int64) (*SellerStat
 		return nil, err
 	}
 
+	// Топ-20 товаров продавца: сортировка по выручке, затем по просмотрам.
 	rows, err := r.pg.Query(ctx, `
 		SELECT p.id, p.title,
 			COALESCE((SELECT count(*) FROM product_views pv WHERE pv.product_id=p.id),0) AS views,
@@ -164,8 +174,10 @@ func (r *statsRepo) SellerStats(ctx context.Context, ownerID int64) (*SellerStat
 	return &s, rows.Err()
 }
 
+// subscriptionsRepo — реализация Subscriptions на pgxpool.
 type subscriptionsRepo struct{ pg *pgxpool.Pool }
 
+// Subscribe — подписывает пользователя на канал (UPSERT, повторная подписка игнорируется).
 func (r *subscriptionsRepo) Subscribe(ctx context.Context, userID, channelID int64) error {
 	_, err := r.pg.Exec(ctx, `
 		INSERT INTO subscriptions (user_id, channel_id) VALUES ($1,$2)
@@ -173,17 +185,20 @@ func (r *subscriptionsRepo) Subscribe(ctx context.Context, userID, channelID int
 	return err
 }
 
+// Unsubscribe — отписывает пользователя от канала.
 func (r *subscriptionsRepo) Unsubscribe(ctx context.Context, userID, channelID int64) error {
 	_, err := r.pg.Exec(ctx, `DELETE FROM subscriptions WHERE user_id=$1 AND channel_id=$2`, userID, channelID)
 	return err
 }
 
+// IsSubscribed — проверяет, подписан ли пользователь на канал.
 func (r *subscriptionsRepo) IsSubscribed(ctx context.Context, userID, channelID int64) (bool, error) {
 	var exists bool
 	err := r.pg.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id=$1 AND channel_id=$2)`, userID, channelID).Scan(&exists)
 	return exists, err
 }
 
+// ByUser — возвращает ID каналов, на которые подписан пользователь (новые первые).
 func (r *subscriptionsRepo) ByUser(ctx context.Context, userID int64) ([]int64, error) {
 	rows, err := r.pg.Query(ctx, `SELECT channel_id FROM subscriptions WHERE user_id=$1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -201,8 +216,10 @@ func (r *subscriptionsRepo) ByUser(ctx context.Context, userID int64) ([]int64, 
 	return out, rows.Err()
 }
 
+// filterRepo — реализация Filter на pgxpool: стоп-слова для цензуры.
 type filterRepo struct{ pg *pgxpool.Pool }
 
+// Add — добавляет стоп-слово в фильтр (UPSERT, повторные добавления игнорируются).
 func (r *filterRepo) Add(ctx context.Context, word string) error {
 	_, err := r.pg.Exec(ctx, `
 		INSERT INTO filter_words (word) VALUES ($1)
@@ -210,6 +227,7 @@ func (r *filterRepo) Add(ctx context.Context, word string) error {
 	return err
 }
 
+// List — возвращает все стоп-слова в порядке добавления.
 func (r *filterRepo) List(ctx context.Context) ([]string, error) {
 	rows, err := r.pg.Query(ctx, `SELECT word FROM filter_words ORDER BY id`)
 	if err != nil {
@@ -227,6 +245,7 @@ func (r *filterRepo) List(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// Remove — удаляет стоп-слово из фильтра.
 func (r *filterRepo) Remove(ctx context.Context, word string) error {
 	_, err := r.pg.Exec(ctx, `DELETE FROM filter_words WHERE word=$1`, word)
 	return err

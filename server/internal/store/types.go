@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// User — модель пользователя Telegram-бота.
 type User struct {
 	ID        int64     `json:"id"`
 	TgUserID  int64     `json:"tg_user_id"`
@@ -15,6 +16,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Channel — модель канала (Telegram-группа/канал, привязанный к платформе).
 type Channel struct {
 	ID        int64     `json:"id"`
 	TgChatID  int64     `json:"tg_chat_id"`
@@ -25,6 +27,7 @@ type Channel struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Video — модель видео, загруженного в канал.
 type Video struct {
 	ID         int64    `json:"id"`
 	TgMsgID    int64    `json:"tg_msg_id"`
@@ -40,6 +43,7 @@ type Video struct {
 	PostedAt   time.Time `json:"posted_at"`
 }
 
+// Shop — модель магазина продавца.
 type Shop struct {
 	ID          int64  `json:"id"`
 	OwnerID     int64  `json:"owner_id"`
@@ -51,6 +55,7 @@ type Shop struct {
 	Status      string `json:"status"`
 }
 
+// Product — модель товара внутри магазина.
 type Product struct {
 	ID            int64     `json:"id"`
 	ShopID        int64     `json:"shop_id"`
@@ -66,6 +71,7 @@ type Product struct {
 	PostedAt      time.Time `json:"posted_at"`
 }
 
+// Order — модель заказа товара покупателем.
 type Order struct {
 	ID             int64     `json:"id"`
 	ShopID         int64     `json:"shop_id"`
@@ -80,6 +86,7 @@ type Order struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// Comment — модель комментария к видео (поддержка вложенных ответов через ParentID).
 type Comment struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
@@ -89,6 +96,7 @@ type Comment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Report — модель жалобы (репорта) на видео.
 type Report struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
@@ -107,38 +115,39 @@ type ViewDay struct {
 
 // VideoStat — аналитика по одному видео / топ видео.
 type VideoStat struct {
-	VideoID int64  `json:"video_id"`
-	Views   int64  `json:"views"`
-	Uniques int64  `json:"unique_viewers"`
-	Likes   int64  `json:"likes"`
+	VideoID         int64   `json:"video_id"`
+	Views           int64   `json:"views"`
+	Uniques         int64   `json:"unique_viewers"`
+	Likes           int64   `json:"likes"`
 	AvgWatchSeconds float64 `json:"avg_watch_seconds"`
 }
 
 // AdminStats — сводка для дашборда (этап 3).
 type AdminStats struct {
-	Users        int64   `json:"users"`
-	Videos       int64   `json:"videos"`
-	VisibleVideos int64  `json:"visible_videos"`
-	Views        int64   `json:"views"`
-	Likes        int64   `json:"likes"`
-	Comments     int64   `json:"comments"`
-	ReportsOpen  int64   `json:"reports_open"`
-	Shops        int64   `json:"shops"`
-	Products     int64   `json:"products"`
-	Orders       int64   `json:"orders"`
-	Revenue      float64 `json:"revenue"`
+	Users         int64   `json:"users"`
+	Videos        int64   `json:"videos"`
+	VisibleVideos int64   `json:"visible_videos"`
+	Views         int64   `json:"views"`
+	Likes         int64   `json:"likes"`
+	Comments      int64   `json:"comments"`
+	ReportsOpen   int64   `json:"reports_open"`
+	Shops         int64   `json:"shops"`
+	Products      int64   `json:"products"`
+	Orders        int64   `json:"orders"`
+	Revenue       float64 `json:"revenue"`
 }
 
 // SellerStats — аналитика продавца (этап 7).
 type SellerStats struct {
-	Orders        int64   `json:"orders"`
-	Pending       int64   `json:"pending"`
-	Confirmed     int64   `json:"confirmed"`
-	Revenue       float64 `json:"revenue"`
-	ByProduct     []ProductStat `json:"by_product"`
-	Views         int64   `json:"product_views"`
+	Orders    int64         `json:"orders"`
+	Pending   int64         `json:"pending"`
+	Confirmed int64         `json:"confirmed"`
+	Revenue   float64       `json:"revenue"`
+	ByProduct []ProductStat `json:"by_product"`
+	Views     int64         `json:"product_views"`
 }
 
+// ProductStat — статистика по отдельному товару (views, orders, revenue).
 type ProductStat struct {
 	ProductID int64   `json:"product_id"`
 	Title     string  `json:"title"`
@@ -149,20 +158,22 @@ type ProductStat struct {
 
 // UserStats — персональная статистика пользователя (/v1/stats/me).
 type UserStats struct {
-	Views         int64   `json:"views"`
-	WatchSeconds  int64   `json:"watch_seconds"`
-	LikesGiven    int64   `json:"likes_given"`
-	CommentsGiven int64   `json:"comments_given"`
-	Subscriptions int64   `json:"subscriptions"`
+	Views         int64 `json:"views"`
+	WatchSeconds  int64 `json:"watch_seconds"`
+	LikesGiven    int64 `json:"likes_given"`
+	CommentsGiven int64 `json:"comments_given"`
+	Subscriptions int64 `json:"subscriptions"`
 }
 
 // --- Репозитории (интерфейсы + реализация на pgxpool) ---
 
+// Channels — репозиторий каналов: поиск/создание по tg_chat_id.
 type Channels interface {
 	EnsureByTgChatID(ctx context.Context, tgChatID int64, kind, title string) (int64, error)
 	GetByTgChatID(ctx context.Context, tgChatID int64) (*Channel, error)
 }
 
+// Users — репозиторий пользователей: upsert, поиск, управление ролями/банами.
 type Users interface {
 	Upsert(ctx context.Context, u User) (int64, error)
 	GetByTgID(ctx context.Context, tgID int64) (*User, error)
@@ -171,6 +182,7 @@ type Users interface {
 	SetBanned(ctx context.Context, id int64, banned bool) error
 }
 
+// Videos — репозиторий видео: вставка, поиск, пагинация, бан/разбан.
 type Videos interface {
 	Insert(ctx context.Context, v Video) error
 	VisibleFrom(ctx context.Context, channelID, after, limit int64) ([]Video, error)
@@ -183,6 +195,7 @@ type Videos interface {
 	Count(ctx context.Context, status string) (int64, error)
 }
 
+// Shops — репозиторий магазинов: CRUD, поиск, приостановка.
 type Shops interface {
 	Create(ctx context.Context, s Shop) (int64, error)
 	List(ctx context.Context) ([]Shop, error)
@@ -195,6 +208,7 @@ type Shops interface {
 	Suspend(ctx context.Context, id int64) error
 }
 
+// Products — репозиторий товаров: вставка, каталог, учёт просмотров.
 type Products interface {
 	Insert(ctx context.Context, p Product) error
 	ListByShop(ctx context.Context, shopID int64) ([]Product, error)
@@ -207,6 +221,7 @@ type Products interface {
 	Hide(ctx context.Context, id int64) error
 }
 
+// Orders — репозиторий заказов: создание, смена статуса, привязка чата.
 type Orders interface {
 	Create(ctx context.Context, o Order) (int64, error)
 	Get(ctx context.Context, id int64) (*Order, error)
@@ -217,6 +232,7 @@ type Orders interface {
 	GetChatLink(ctx context.Context, orderID int64) (int64, bool, error)
 }
 
+// Engagements — репозиторий взаимодействий: лайки, комментарии, жалобы, просмотры.
 type Engagements interface {
 	Like(ctx context.Context, userID, videoID int64) error
 	Unlike(ctx context.Context, userID, videoID int64) error
@@ -234,6 +250,7 @@ type Engagements interface {
 	CountViews(ctx context.Context, videoID int64) (int64, error)
 }
 
+// Feed — репозиторий ленты: Redis ZSET кандидатов + скоринг из PG.
 type Feed interface {
 	AddVideo(ctx context.Context, channelID, videoID int64, score float64) error
 	Top(ctx context.Context, channelID, n int64) ([]int64, error)
@@ -241,6 +258,7 @@ type Feed interface {
 	RemoveVideo(ctx context.Context, channelID, videoID int64) error
 }
 
+// Stats — репозиторий статистики: просмотры по дням, агрегаты, топ видео, дашборд продавца.
 type Stats interface {
 	VideoViewsDay(ctx context.Context, videoID int64, days int) ([]ViewDay, error)
 	VideoStat(ctx context.Context, videoID int64) (*VideoStat, error)
@@ -250,6 +268,7 @@ type Stats interface {
 	UserStats(ctx context.Context, userID int64) (*UserStats, error)
 }
 
+// Subscriptions — репозиторий подписок пользователей на каналы.
 type Subscriptions interface {
 	Subscribe(ctx context.Context, userID, channelID int64) error
 	Unsubscribe(ctx context.Context, userID, channelID int64) error
@@ -257,12 +276,14 @@ type Subscriptions interface {
 	ByUser(ctx context.Context, userID int64) ([]int64, error)
 }
 
+// Filter — репозиторий стоп-слов (фильтр нецензурной лексики).
 type Filter interface {
 	Add(ctx context.Context, word string) error
 	List(ctx context.Context) ([]string, error)
 	Remove(ctx context.Context, word string) error
 }
 
+// Review — модель отзыва на товар.
 type Review struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
@@ -272,12 +293,14 @@ type Review struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Reviews — репозиторий отзывов: добавление, поиск по товару, средний рейтинг.
 type Reviews interface {
 	Add(ctx context.Context, r Review) error
 	ByProduct(ctx context.Context, productID int64) ([]Review, error)
 	AvgRating(ctx context.Context, productID int64) (float64, int64, error)
 }
 
+// Repos — агрегатор всех репозиториев; создаётся один раз через NewRepos.
 type Repos struct {
 	Channels      Channels
 	Users         Users
@@ -293,6 +316,7 @@ type Repos struct {
 	Reviews       Reviews
 }
 
+// NewRepos — создаёт Repos со всеми репозиториями, привязанными к пулу PG и Redis.
 func NewRepos(s *Store) *Repos {
 	return &Repos{
 		Channels:      &channelsRepo{pg: s.PG},

@@ -15,6 +15,7 @@ type feedRepo struct {
 	pg  *pgxpool.Pool
 }
 
+// AddVideo — добавляет видео в ленту канала с начальным score (для кандидатов в Redis ZSET).
 func (r *feedRepo) AddVideo(ctx context.Context, channelID, videoID int64, score float64) error {
 	key := feedKey(channelID)
 	return r.rdb.ZAdd(ctx, key, redis.Z{Score: score, Member: videoID}).Err()
@@ -60,7 +61,7 @@ func (r *feedRepo) ScoredFeed(ctx context.Context, channelID, offset, limit int6
 		return nil, nil
 	}
 
-	// Скоринг из PG: один запрос на все кандидаты.
+	// Скоринг из PG: считаем score для каждого кандидата отдельным запросом.
 	type vs struct {
 		id    int64
 		score float64
@@ -69,19 +70,20 @@ func (r *feedRepo) ScoredFeed(ctx context.Context, channelID, offset, limit int6
 	for _, id := range ids {
 		sc, err := r.videoScore(ctx, id)
 		if err != nil {
+			// Видео могло быть удалено — пропускаем, не прерываем ленту.
 			continue
 		}
 		scored = append(scored, vs{id: id, score: sc})
 	}
 
-	// Сортировка по убыванию score.
+	// Сортировка по убыванию score (Insertion Sort — достаточно для 200 элементов).
 	for i := 1; i < len(scored); i++ {
 		for j := i; j > 0 && scored[j].score > scored[j-1].score; j-- {
 			scored[j], scored[j-1] = scored[j-1], scored[j]
 		}
 	}
 
-	// Пагинация.
+	// Пагинация по отсортированному массиву.
 	start := int(offset)
 	if start > len(scored) {
 		start = len(scored)
@@ -103,6 +105,12 @@ func (r *feedRepo) ScoredFeed(ctx context.Context, channelID, offset, limit int6
 //	+ 0.15 * view_time_normalized - 0.5 * log(1 + hours_since_upload)
 func (r *feedRepo) videoScore(ctx context.Context, videoID int64) (float64, error) {
 	var likes24h, comments12h, avgWatch, durationMs, hoursSince float64
+	// Один запрос собирает все метрики для формулы скоринга:
+	//   - количество лайков за 24ч
+	//   - количество комментариев за 12ч
+	//   - среднее время просмотра (watch_seconds)
+	//   - длительность видео (для нормализации)
+	//   - часы с момента загрузки (для штрафа за «старость»)
 	err := r.pg.QueryRow(ctx, `
 		SELECT
 		  (SELECT count(*) FROM likes l
@@ -117,6 +125,7 @@ func (r *feedRepo) videoScore(ctx context.Context, videoID int64) (float64, erro
 	if err != nil {
 		return 0, err
 	}
+	// Нормализуем среднее время просмотра к [0, 1] относительно длительности видео.
 	viewNorm := 0.0
 	if durationMs > 0 {
 		viewNorm = avgWatch / (durationMs / 1000.0)
@@ -128,11 +137,13 @@ func (r *feedRepo) videoScore(ctx context.Context, videoID int64) (float64, erro
 	return score, nil
 }
 
+// RemoveVideo — удаляет видео из Redis ZSET ленты канала.
 func (r *feedRepo) RemoveVideo(ctx context.Context, channelID, videoID int64) error {
 	key := feedKey(channelID)
 	return r.rdb.ZRem(ctx, key, videoID).Err()
 }
 
+// feedKey — генерирует Redis-ключ для ZSET ленты канала: "feed:{channelID}".
 func feedKey(channelID int64) string {
 	return "feed:" + strconv.FormatInt(channelID, 10)
 }

@@ -10,6 +10,8 @@ import (
 	"tgcloud/server/internal/tgbot"
 )
 
+// Server — корневая структура HTTP-API. Хранит все зависимости: репозитории,
+// менеджер авторизации, TG-бот, rate-limiter, метрики и путь к файлам загрузок.
 type Server struct {
 	repos         *store.Repos
 	auth          *auth.Manager
@@ -21,6 +23,9 @@ type Server struct {
 	httpAddr      string
 }
 
+// New — конструктор Server. Инициализирует rate-limiter и метрики.
+// feedChannelID — TG-чат основной ленты; bot — клиент Telegram Bot API;
+// uploadDir — директория для загрузок; httpAddr — адрес для ListenAndServe.
 func New(repos *store.Repos, am *auth.Manager, feedChannelID int64, bot *tgbot.Client, uploadDir, httpAddr string) *Server {
 	return &Server{
 		repos:         repos,
@@ -34,6 +39,11 @@ func New(repos *store.Repos, am *auth.Manager, feedChannelID int64, bot *tgbot.C
 	}
 }
 
+// Routes — собирает и возвращает http.Handler со всеми маршрутами API.
+// Публичные эндпоинты (/health, /metrics, /v1/auth/telegram) доступны без токена.
+// Остальные обёрнуты в authMW; админ-эндпоинты дополнительно обёрнуты в adminMW.
+// Гонко-чувствительные эндпоинты (like, comment, report) обёрнуты в rlMW.
+// Внешний слой — requestLog (логирование + метрики) и corsMW (CORS-заголовки).
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
@@ -110,20 +120,27 @@ func (s *Server) Routes() http.Handler {
 
 // --- helpers ---
 
+// writeJSON — сериализует v в JSON и записывает в ответ с указанным HTTP-кодом.
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeErr — вспомогательный: формирует JSON {"error": msg} с указанным кодом.
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
+// ctxKey — тип-ключ для хранения claims в context.Context (избегаем коллизий ключей).
 type ctxKey int
 
+// claimsKey — константный ключ для извлечения auth.Claims из контекста запроса.
 const claimsKey ctxKey = 0
 
+// authMW — middleware авторизации. Извлекает Bearer-токен из заголовка Authorization,
+// парсит его через auth.Manager, проверяет бан пользователя, кладёт claims в контекст.
+// При ошибке возвращает 401 Unauthorized или 403 Forbidden (ban).
 func (s *Server) authMW(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("Authorization")
@@ -137,6 +154,7 @@ func (s *Server) authMW(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
+		// Проверяем, не забанен ли пользователь после выдачи токена.
 		if u, err := s.repos.Users.Get(r.Context(), claims.UserID); err == nil && u.Banned {
 			writeErr(w, http.StatusForbidden, "banned")
 			return
@@ -169,10 +187,12 @@ func (s *Server) adminMW(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// withClaims — кладёт auth.Claims в контекст запроса для последующих middleware/хендлеров.
 func withClaims(ctx context.Context, c *auth.Claims) context.Context {
 	return context.WithValue(ctx, claimsKey, c)
 }
 
+// claimsFrom — извлекает auth.Claims из контекста; возвращает nil если не найдены.
 func claimsFrom(ctx context.Context) *auth.Claims {
 	c, _ := ctx.Value(claimsKey).(*auth.Claims)
 	return c

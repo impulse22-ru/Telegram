@@ -7,6 +7,9 @@ import (
 	"tgcloud/server/internal/log"
 )
 
+// requestLog — middleware логирования и сбора метрик. Оборачивает ResponseWriter
+// для перехвата HTTP-кода ответа, логирует method, path, status, dur,
+// а также увеличивает счётчик метрик по ключу "METHOD /path".
 func (s *Server) requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -18,11 +21,14 @@ func (s *Server) requestLog(next http.Handler) http.Handler {
 	})
 }
 
+// logWriter — обёртка над http.ResponseWriter, запоминающая записанный HTTP-код
+// статуса для целей логирования (стандартный WriteHeader не возвращает код).
 type logWriter struct {
 	http.ResponseWriter
 	status int
 }
 
+// WriteHeader — перехватывает запись статус-кода и сохраняет его в поле status.
 func (lw *logWriter) WriteHeader(code int) {
 	lw.status = code
 	lw.ResponseWriter.WriteHeader(code)
@@ -34,6 +40,7 @@ func corsMW(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		// Preflight-запросы OPTIONS отвечают 204 No Content без вызова хендлера.
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

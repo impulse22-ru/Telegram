@@ -9,6 +9,8 @@ import (
 	"tgcloud/server/internal/store"
 )
 
+// parseLimit — парсит query-параметр limit, ограничивая диапазон 1..200.
+// При отсутствии/некорректном значении возвращает дефолт 50.
 func parseLimit(s string) int64 {
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || n <= 0 || n > 200 {
@@ -17,6 +19,8 @@ func parseLimit(s string) int64 {
 	return n
 }
 
+// parseOffset — парсит query-параметр offset для пагинации.
+// Отрицательные и некорректные значения схлопываются в 0.
 func parseOffset(s string) int64 {
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || n < 0 {
@@ -25,6 +29,9 @@ func parseOffset(s string) int64 {
 	return n
 }
 
+// handleShopCreate — POST /v1/shop. Создание магазина владельцем (authMW).
+// tg_chat_id=0 означает, что канал нужно создать через бота (createNewChannel).
+// Канал регистрируется в Channels как тип "shop" для индексации товаров.
 func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	var req struct {
@@ -43,6 +50,7 @@ func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	tgChatID := req.TgChatID
+	// Если клиент не передал существующий канал — создаём его через Bot API.
 	if tgChatID == 0 {
 		if s.bot == nil {
 			writeErr(w, http.StatusServiceUnavailable, "bot not configured")
@@ -76,6 +84,8 @@ func (s *Server) handleShopCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "tg_chat_id": tgChatID})
 }
 
+// handleCatalog — GET /v1/catalog. Каталог активных товаров (authMW).
+// Параметры: limit (дефолт — из БД), category (фильтр по категории, опционален).
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
 	category := r.URL.Query().Get("category")
@@ -87,6 +97,7 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// handleShopsList — GET /v1/shops. Список всех магазинов (authMW, без пагинации).
 func (s *Server) handleShopsList(w http.ResponseWriter, r *http.Request) {
 	shops, err := s.repos.Shops.List(r.Context())
 	if err != nil {
@@ -96,6 +107,8 @@ func (s *Server) handleShopsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"shops": shops})
 }
 
+// handleShopsSearch — GET /v1/shops/search?q=... Поиск магазинов по названию (authMW).
+// q обязателен, иначе 400.
 func (s *Server) handleShopsSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
@@ -110,6 +123,8 @@ func (s *Server) handleShopsSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"shops": shops})
 }
 
+// handleShopUpdate — PUT /v1/shop/{id}. Обновление полей магазина владельцем
+// (authMW; 403 для чужих магазинов — проверка shop.OwnerID против claims.UserID).
 func (s *Server) handleShopUpdate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -117,6 +132,7 @@ func (s *Server) handleShopUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
+	// Магазин может менять только его владелец: запрос чужого магазина → 403.
 	shop, err := s.repos.Shops.Get(r.Context(), id)
 	if err != nil || shop.OwnerID != claims.UserID {
 		writeErr(w, http.StatusForbidden, "not your shop")
@@ -139,6 +155,8 @@ func (s *Server) handleShopUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"updated": true})
 }
 
+// handleShopDelete — DELETE /v1/shop/{id}. Удаление магазина владельцем
+// (authMW; 403 для чужих магазинов — проверка владельца через shop.OwnerID).
 func (s *Server) handleShopDelete(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -158,6 +176,9 @@ func (s *Server) handleShopDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
+// handleProductCreate — POST /v1/product. Создание товара в своём магазине
+// (authMW; проверка: магазин должен принадлежать текущему пользователю).
+// Валюта по умолчанию RUB, статус on_sale.
 func (s *Server) handleProductCreate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	var req struct {
@@ -174,6 +195,7 @@ func (s *Server) handleProductCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
+	// Можно создавать товары только в своих магазинах (проверка владельца).
 	shop, err := s.repos.Shops.Get(r.Context(), req.ShopID)
 	if err != nil || shop.OwnerID != claims.UserID {
 		writeErr(w, http.StatusForbidden, "not your shop")
@@ -200,11 +222,14 @@ func (s *Server) handleProductCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"status": "ok"})
 }
 
+// handleOrderCreate — POST /v1/order. Оформление заказа покупателем (authMW).
+// Количество по умолчанию 1; итоговая сумма = цена товара × количество.
+// После создания отправляет уведомление продавцу через бота.
 func (s *Server) handleOrderCreate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	var req struct {
-		ProductID     int64  `json:"product_id"`
-		Quantity      int    `json:"quantity"`
+		ProductID      int64  `json:"product_id"`
+		Quantity       int    `json:"quantity"`
 		ContactDetails string `json:"contact_details"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -220,19 +245,20 @@ func (s *Server) handleOrderCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.repos.Orders.Create(r.Context(), store.Order{
-		ShopID:        product.ShopID,
-		BuyerID:       claims.UserID,
-		ProductID:     product.ID,
-		Quantity:      req.Quantity,
-		PriceAmount:   product.PriceAmount * float64(req.Quantity),
-		PriceCurrency: product.PriceCurrency,
-		PaymentStatus: "pending",
+		ShopID:         product.ShopID,
+		BuyerID:        claims.UserID,
+		ProductID:      product.ID,
+		Quantity:       req.Quantity,
+		PriceAmount:    product.PriceAmount * float64(req.Quantity),
+		PriceCurrency:  product.PriceCurrency,
+		PaymentStatus:  "pending",
 		ContactDetails: req.ContactDetails,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	// Собираем объект заказа повторно, чтобы передать в notifyOrder без повторного чтения из БД.
 	order := store.Order{
 		ID:             id,
 		ShopID:         product.ShopID,
@@ -248,6 +274,8 @@ func (s *Server) handleOrderCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"order_id": id})
 }
 
+// handleOrderGet — GET /v1/order/{id}. Просмотр заказа (authMW).
+// Доступ: покупатель, владелец магазина или админ; прочие → 403.
 func (s *Server) handleOrderGet(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -260,6 +288,7 @@ func (s *Server) handleOrderGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims := claimsFrom(r.Context())
+	// Доступ только участникам сделки (покупатель/владелец магазина) или админу.
 	shop, err := s.repos.Shops.Get(r.Context(), order.ShopID)
 	if err == nil {
 		if order.BuyerID != claims.UserID && shop.OwnerID != claims.UserID && claims.Role != "admin" {
@@ -270,6 +299,9 @@ func (s *Server) handleOrderGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, order)
 }
 
+// handleOrderConfirm — POST /v1/order/{id}/confirm. Подтверждение заказа продавцом
+// (authMW; только владелец магазина). При подтверждении фиксируется канал связи
+// (shop.TgChatID) для диалога покупатель↔продавец, затем шлются уведомления.
 func (s *Server) handleOrderConfirm(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -282,6 +314,7 @@ func (s *Server) handleOrderConfirm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	// Подтверждать может только владелец магазина, которому принадлежит заказ.
 	shop, err := s.repos.Shops.Get(r.Context(), order.ShopID)
 	if err != nil || shop.OwnerID != claims.UserID {
 		writeErr(w, http.StatusForbidden, "not your order")
@@ -299,7 +332,10 @@ func (s *Server) handleOrderConfirm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "confirmed"})
 }
 
-// GET /v1/order/{id}/chat — канал связи заказа (покупатель↔продавец).
+// handleOrderChat — GET /v1/order/{id}/chat. Канал связи заказа (покупатель↔продавец).
+// Доступ только участникам или админу. Если ссылка не была зафиксирована при
+// подтверждении — фолбэк на shop.TgChatID. Возвращает данные собеседника и
+// платёжную информацию продавца.
 func (s *Server) handleOrderChat(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -327,6 +363,8 @@ func (s *Server) handleOrderChat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	// Фолбэк: если заказ ещё не подтверждён, ссылка не зафиксирована —
+	// используем канал магазина как витрину для связи.
 	if !exists && shop.TgChatID > 0 {
 		tgChatID = shop.TgChatID
 		exists = true
@@ -344,6 +382,7 @@ func (s *Server) handleOrderChat(w http.ResponseWriter, r *http.Request) {
 	peerDisplay := peerName
 	if err == nil {
 		peerTgID = peer.TgUserID
+		// Если у партнёра нет имени — показываем его роль.
 		if peer.Name != "" {
 			peerDisplay = peer.Name
 		}
@@ -359,6 +398,8 @@ func (s *Server) handleOrderChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleOrdersSeller — GET /v1/orders/seller. Заказы по всем магазинам продавца
+// (authMW). Собирает заказы из каждого магазина владельца и объединяет в один список.
 func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	limit := parseLimit(r.URL.Query().Get("limit"))
@@ -380,7 +421,7 @@ func (s *Server) handleOrdersSeller(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"orders": out})
 }
 
-// GET /v1/orders/me — заказы текущего покупателя.
+// handleOrdersMine — GET /v1/orders/me. Заказы текущего покупателя (authMW).
 func (s *Server) handleOrdersMine(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	limit := parseLimit(r.URL.Query().Get("limit"))
@@ -393,7 +434,7 @@ func (s *Server) handleOrdersMine(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"orders": orders})
 }
 
-// GET /v1/shops/me — мои магазины.
+// handleShopsMine — GET /v1/shops/me. Мои магазины (authMW).
 func (s *Server) handleShopsMine(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	shops, err := s.repos.Shops.ListForOwner(r.Context(), claims.UserID)
@@ -404,7 +445,9 @@ func (s *Server) handleShopsMine(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"shops": shops})
 }
 
-// GET /v1/shop/{id} — витрина магазина с товарами.
+// handleShopGet — GET /v1/shop/{id}. Витрина магазина с товарами (authMW).
+// Дополнительно возвращает флаг subscribed — подписан ли текущий пользователь
+// на канал магазина (если канал удалось найти по tg_chat_id).
 func (s *Server) handleShopGet(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -430,7 +473,8 @@ func (s *Server) handleShopGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"shop": shop, "products": products, "subscribed": subscribed})
 }
 
-// POST /v1/shops/{id}/subscribe
+// handleShopSubscribe — POST /v1/shops/{id}/subscribe. Подписка на канал магазина
+// (authMW). Канал регистрируется с типом "shop" при необходимости (EnsureByTgChatID).
 func (s *Server) handleShopSubscribe(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	shopID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -455,7 +499,8 @@ func (s *Server) handleShopSubscribe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"subscribed": true})
 }
 
-// DELETE /v1/shops/{id}/subscribe
+// handleShopUnsubscribe — DELETE /v1/shops/{id}/subscribe. Отписка от канала магазина
+// (authMW). Аналогично подписке — убеждается, что канал существует.
 func (s *Server) handleShopUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	shopID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -480,7 +525,8 @@ func (s *Server) handleShopUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"unsubscribed": true})
 }
 
-// GET /v1/me/subscriptions — мои подписки на каналы.
+// handleMySubscriptions — GET /v1/me/subscriptions. Мои подписки на каналы (authMW).
+// Возвращает просто список ID каналов (channel_ids), без объектов каналов.
 func (s *Server) handleMySubscriptions(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	channelIDs, err := s.repos.Subscriptions.ByUser(r.Context(), claims.UserID)
@@ -491,7 +537,8 @@ func (s *Server) handleMySubscriptions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"channel_ids": channelIDs})
 }
 
-// GET /v1/product/{id}
+// handleProductGet — GET /v1/product/{id}. Получение товара и количества просмотров
+// (authMW). Просматривать могут все авторизованные пользователи.
 func (s *Server) handleProductGet(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -511,7 +558,7 @@ func (s *Server) handleProductGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"product": product, "views": views})
 }
 
-// POST /v1/product/{id}/view
+// handleProductView — POST /v1/product/{id}/view. Зафиксировать просмотр товара (authMW).
 func (s *Server) handleProductView(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -526,6 +573,8 @@ func (s *Server) handleProductView(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"viewed": true})
 }
 
+// handleProductUpdate — PUT /v1/product/{id}. Обновление товара владельцем магазина
+// (authMW; 403 если товар принадлежит не текущему пользователю — проверка через shop.OwnerID).
 func (s *Server) handleProductUpdate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -538,6 +587,7 @@ func (s *Server) handleProductUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "no product")
 		return
 	}
+	// Только владелец магазина, в котором находится товар, может его менять.
 	shop, err := s.repos.Shops.Get(r.Context(), p.ShopID)
 	if err != nil || shop.OwnerID != claims.UserID {
 		writeErr(w, http.StatusForbidden, "not your shop")
@@ -562,6 +612,8 @@ func (s *Server) handleProductUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"updated": true})
 }
 
+// handleProductDelete — DELETE /v1/product/{id}. Удаление товара владельцем магазина
+// (authMW; 403 для продуктов из чужих магазинов).
 func (s *Server) handleProductDelete(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -586,7 +638,9 @@ func (s *Server) handleProductDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
-// POST /v1/order/{id}/pay — покупатель отметил оплату.
+// handleOrderPay — POST /v1/order/{id}/pay. Покупатель отметил оплату заказа
+// (authMW; 403 если заказ не принадлежит текущему пользователю). После оплаты шлёт
+// уведомления участникам через бота.
 func (s *Server) handleOrderPay(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -599,6 +653,7 @@ func (s *Server) handleOrderPay(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	// Оплатить может только покупатель (владелец заказа).
 	if order.BuyerID != claims.UserID {
 		writeErr(w, http.StatusForbidden, "not your order")
 		return
@@ -611,7 +666,8 @@ func (s *Server) handleOrderPay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "paid"})
 }
 
-// POST /v1/order/{id}/cancel — отмена покупателем.
+// handleOrderCancel — POST /v1/order/{id}/cancel. Отмена заказа покупателем
+// (authMW; 403 если заказ не принадлежит текущему пользователю).
 func (s *Server) handleOrderCancel(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -624,6 +680,7 @@ func (s *Server) handleOrderCancel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	// Отменять заказ может только его покупатель.
 	if order.BuyerID != claims.UserID {
 		writeErr(w, http.StatusForbidden, "not your order")
 		return
@@ -636,6 +693,8 @@ func (s *Server) handleOrderCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 // notifyOrder — шлёт уведомления продавцу/покупателю через бота (этап 7).
+// При отсутствии бота или любой ошибке загрузки данных — тихо выходит (best-effort):
+// уведомления не должны ломать основной запрос.
 func (s *Server) notifyOrder(ctx context.Context, order *store.Order, status string) {
 	if s.bot == nil {
 		return

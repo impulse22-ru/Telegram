@@ -6,7 +6,8 @@ import (
 	"strconv"
 )
 
-// POST /v1/videos/{id}/like
+// handleLike — POST /v1/videos/{id}/like. Поставить лайк видео (authMW + rlMW).
+// Использует userAndVideo для извлечения userID и videoID из контекста/пути.
 func (s *Server) handleLike(w http.ResponseWriter, r *http.Request) {
 	uid, vid, ok := s.userAndVideo(w, r)
 	if !ok {
@@ -19,7 +20,7 @@ func (s *Server) handleLike(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"liked": true})
 }
 
-// POST /v1/videos/{id}/unlike
+// handleUnlike — POST /v1/videos/{id}/unlike. Снять лайк с видео (authMW + rlMW).
 func (s *Server) handleUnlike(w http.ResponseWriter, r *http.Request) {
 	uid, vid, ok := s.userAndVideo(w, r)
 	if !ok {
@@ -32,7 +33,8 @@ func (s *Server) handleUnlike(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"liked": false})
 }
 
-// GET /v1/videos/{id}/comments
+// handleCommentsList — GET /v1/videos/{id}/comments. Список комментариев к видео
+// (authMW, без rlMW — чтение не лимитируется).
 func (s *Server) handleCommentsList(w http.ResponseWriter, r *http.Request) {
 	_, vid, ok := s.userAndVideo(w, r)
 	if !ok {
@@ -46,7 +48,8 @@ func (s *Server) handleCommentsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"comments": comments})
 }
 
-// POST /v1/videos/{id}/comment  {"text":"...","parent_id":0}
+// handleComment — POST /v1/videos/{id}/comment. Добавить комментарий к видео
+// (authMW + rlMW). Поддерживает вложенные комментарии через parent_id.
 func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 	uid, vid, ok := s.userAndVideo(w, r)
 	if !ok {
@@ -68,7 +71,8 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"comment_id": id})
 }
 
-// POST /v1/videos/{id}/report  {"reason":"..."}
+// handleReport — POST /v1/videos/{id}/report. Пожаловаться на видео (authMW + rlMW).
+// Причина опциональна — если не указана, отправляется пустая строка.
 func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	uid, vid, ok := s.userAndVideo(w, r)
 	if !ok {
@@ -85,7 +89,8 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"flagged": true})
 }
 
-// POST /v1/videos/{id}/view  {"watch_seconds":15}
+// handleView — POST /v1/videos/{id}/view. Зафиксировать просмотр видео (authMW).
+// watch_seconds — сколько секунд пользователь реально смотрел (для скоринга).
 func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 	uid, vid, ok := s.userAndVideo(w, r)
 	if !ok {
@@ -102,6 +107,9 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"viewed": true})
 }
 
+// userAndVideo — вспомогательная функция: извлекает userID из claims в контексте
+// и videoID из пути запроса. Возвращает (userID, videoID, ok).
+// Используется всеми хендлерами engagement-эндпоинтов.
 func (s *Server) userAndVideo(w http.ResponseWriter, r *http.Request) (int64, int64, bool) {
 	claims := claimsFrom(r.Context())
 	if claims == nil {

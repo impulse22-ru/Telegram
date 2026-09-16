@@ -9,22 +9,28 @@ import (
 )
 
 // simple metrics в Prometheus text format (этап 5 — мониторинг).
+// metrics — потокобезопасный счётчик HTTP-запросов по ключу "METHOD /path" (MAP),
+// защищённый mutex'ом. Хранит время старта для расчёта uptime.
 type metrics struct {
 	mu      sync.Mutex
 	started time.Time
 	reqs    map[string]int64 // path -> count
 }
 
+// newMetrics — конструктор metrics; стартует отсчёт uptime.
 func newMetrics() *metrics {
 	return &metrics{started: time.Now(), reqs: make(map[string]int64)}
 }
 
+// inc — увеличивает счётчик запросов для пути (вызывается из requestLog).
 func (m *metrics) inc(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.reqs[path]++
 }
 
+// snapshot — потокобезопасно снимает срез метрик: uptime в секундах и строки
+// Prometheus-меток http_requests_total по каждому пути.
 func (m *metrics) snapshot() (uptime int64, lines []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -35,6 +41,8 @@ func (m *metrics) snapshot() (uptime int64, lines []string) {
 	return uptime, lines
 }
 
+// handleMetrics — GET /metrics. Отдаёт метрики в Prometheus text format
+// (без авторизации — эндпоинт для систем мониторинга).
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	uptime, lines := s.metrics.snapshot()
 	var b strings.Builder

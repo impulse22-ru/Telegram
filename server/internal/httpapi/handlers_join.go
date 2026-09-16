@@ -4,9 +4,10 @@ import (
 	"net/http"
 )
 
-// GET /v1/join — пригласительная ссылка в закрытый ленточный канал.
+// handleJoin — POST /v1/join. Пригласительная ссылка в закрытый ленточный канал.
 // Пользователь вступает по ссылке; если канал в режиме одобрения,
 // worker автоматически одобряет chat_join_request.
+// Требует authMW; возвращает 503 если feedChannelID=0 или bot=nil.
 func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 	if s.feedChannelID == 0 || s.bot == nil {
 		writeErr(w, http.StatusServiceUnavailable, "feed channel not configured")

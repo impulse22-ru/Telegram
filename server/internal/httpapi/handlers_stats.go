@@ -8,7 +8,9 @@ import (
 	"tgcloud/server/internal/store"
 )
 
-// GET /v1/videos/{id}/stats — аналитика просмотров конкретного видео.
+// handleVideoStats — GET /v1/videos/{id}/stats. Аналитика просмотров конкретного видео
+// (authMW). Возвращает совокупную статистику (likes, comments, views) и разбивку по дням;
+// период days задаётся query-параметром (1..90, по умолчанию 7).
 func (s *Server) handleVideoStats(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -36,6 +38,7 @@ func (s *Server) handleVideoStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	days := 7
+	// Разбивка просмотров по дням: ограничение диапазона 1..90.
 	if sd := r.URL.Query().Get("days"); sd != "" {
 		if n, err := strconv.Atoi(sd); err == nil && n > 0 && n <= 90 {
 			days = n
@@ -49,7 +52,8 @@ func (s *Server) handleVideoStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"stat": v, "by_day": byDay, "likes": likes, "comments": comments, "views": views})
 }
 
-// GET /v1/stats/me — статистика моих просмотров/лайков.
+// handleMyStats — GET /v1/stats/me. Статистика текущего пользователя (authMW):
+// просмотры, лайки, комментарии и т.п. (UserStats агрегирует активность по userID).
 func (s *Server) handleMyStats(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	if claims == nil {
@@ -64,7 +68,7 @@ func (s *Server) handleMyStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-// GET /v1/admin/stats — общий дашборд.
+// handleAdminStats — GET /v1/admin/stats. Общий дашборд для админа (authMW + adminMW).
 func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	st, err := s.repos.Stats.AdminStats(r.Context())
 	if err != nil {
@@ -74,7 +78,8 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-// GET /v1/admin/top — топ видео по просмотрам.
+// handleAdminTop — GET /v1/admin/top. Топ видео по просмотрам для админа
+// (authMW + adminMW). Всегда возвращает 10 позиций.
 func (s *Server) handleAdminTop(w http.ResponseWriter, r *http.Request) {
 	top, err := s.repos.Stats.TopVideos(r.Context(), 10)
 	if err != nil {
@@ -84,7 +89,8 @@ func (s *Server) handleAdminTop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"top": top})
 }
 
-// GET /v1/stats/sales — аналитика продаж текущего пользователя (продавца).
+// handleSalesStats — GET /v1/stats/sales. Аналитика продаж текущего пользователя
+// (authMW). SellerStats агрегирует выручку и объёмы по магазинам владельца.
 func (s *Server) handleSalesStats(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	st, err := s.repos.Stats.SellerStats(r.Context(), claims.UserID)
@@ -97,7 +103,8 @@ func (s *Server) handleSalesStats(w http.ResponseWriter, r *http.Request) {
 
 // --- Модерация (этап 7) ---
 
-// GET /v1/admin/reports?status=open
+// handleAdminReports — GET /v1/admin/reports?status=open. Список жалоб для модерации
+// (authMW + adminMW). Фильтр по статусу (open/reviewed/dismissed), пустой — все.
 func (s *Server) handleAdminReports(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	reports, err := s.repos.Engagements.Reports(r.Context(), status, 100)
@@ -108,7 +115,8 @@ func (s *Server) handleAdminReports(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"reports": reports})
 }
 
-// POST /v1/admin/reports/{id}/status {"status":"reviewed"|"dismissed"}
+// handleAdminReportStatus — POST /v1/admin/reports/{id}/status. Смена статуса жалобы
+// (authMW + adminMW; "reviewed"|"dismissed"). Статус обязателен, иначе 400.
 func (s *Server) handleAdminReportStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -129,7 +137,8 @@ func (s *Server) handleAdminReportStatus(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"updated": true})
 }
 
-// POST /v1/admin/videos/{id}/ban  (и удаление из ленты)
+// handleAdminVideoBan — POST /v1/admin/videos/{id}/ban. Бан видео (authMW + adminMW).
+// Помимо отметки в БД удаляет видео из Redis-ленты канала, чтобы оно исчезло из фида.
 func (s *Server) handleAdminVideoBan(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -147,7 +156,8 @@ func (s *Server) handleAdminVideoBan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"banned": true})
 }
 
-// POST /v1/admin/videos/{id}/unban
+// handleAdminVideoUnban — POST /v1/admin/videos/{id}/unban. Снятие бана с видео
+// (authMW + adminMW). Видео возвращается в ленту при следующей индексации.
 func (s *Server) handleAdminVideoUnban(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -161,7 +171,8 @@ func (s *Server) handleAdminVideoUnban(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"unbanned": true})
 }
 
-// DELETE /v1/admin/videos/{id} — мягкое удаление видео.
+// handleAdminVideoDelete — DELETE /v1/admin/videos/{id}. Мягкое удаление видео админом
+// (authMW + adminMW). Удалённое видео исчезает из ленты/поиска.
 func (s *Server) handleAdminVideoDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -175,7 +186,8 @@ func (s *Server) handleAdminVideoDelete(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
-// DELETE /v1/admin/comments/{id} — удаление комментария.
+// handleAdminCommentDelete — DELETE /v1/admin/comments/{id}. Удаление комментария админом
+// (authMW + adminMW).
 func (s *Server) handleAdminCommentDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -189,7 +201,8 @@ func (s *Server) handleAdminCommentDelete(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
-// POST /v1/admin/shops/{id}/suspend
+// handleAdminShopSuspend — POST /v1/admin/shops/{id}/suspend. Приостановка магазина
+// админом (authMW + adminMW). Приостановленный магазин исключается из каталога.
 func (s *Server) handleAdminShopSuspend(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -205,7 +218,8 @@ func (s *Server) handleAdminShopSuspend(w http.ResponseWriter, r *http.Request) 
 
 // --- Фильтр-слова (этап 5) ---
 
-// GET /v1/admin/filter-words
+// handleFilterWordsList — GET /v1/admin/filter-words. Список запрещённых слов
+// (authMW + adminMW). Слова используются фильтром комментариев.
 func (s *Server) handleFilterWordsList(w http.ResponseWriter, r *http.Request) {
 	words, err := s.repos.Filter.List(r.Context())
 	if err != nil {
@@ -215,7 +229,8 @@ func (s *Server) handleFilterWordsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"words": words})
 }
 
-// POST /v1/admin/filter-word {"word":"..."}
+// handleFilterWordAdd — POST /v1/admin/filter-word. Добавление запрещённого слова
+// (authMW + adminMW). Пустое слово не принимается (400).
 func (s *Server) handleFilterWordAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Word string `json:"word"`
@@ -231,7 +246,8 @@ func (s *Server) handleFilterWordAdd(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"added": true})
 }
 
-// DELETE /v1/admin/filter-word/{word}
+// handleFilterWordRemove — DELETE /v1/admin/filter-word/{word}. Удаление запрещённого
+// слова (authMW + adminMW). Слово берётся из пути (URL-декодируется автоматически).
 func (s *Server) handleFilterWordRemove(w http.ResponseWriter, r *http.Request) {
 	word := r.PathValue("word")
 	if err := s.repos.Filter.Remove(r.Context(), word); err != nil {
@@ -241,7 +257,8 @@ func (s *Server) handleFilterWordRemove(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"removed": true})
 }
 
-// POST /v1/admin/users/{id}/ban — бан пользователя.
+// handleAdminUserBan — POST /v1/admin/users/{id}/ban. Бан пользователя (authMW + adminMW).
+// Edge-case: бан самого себя запрещён (400 cannot ban self).
 func (s *Server) handleAdminUserBan(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -249,6 +266,7 @@ func (s *Server) handleAdminUserBan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
+	// Защита от бана самого себя — иначе админ потеряет доступ.
 	if id == claims.UserID {
 		writeErr(w, http.StatusBadRequest, "cannot ban self")
 		return
@@ -260,7 +278,8 @@ func (s *Server) handleAdminUserBan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"banned": true})
 }
 
-// POST /v1/admin/users/{id}/unban — разбан пользователя.
+// handleAdminUserUnban — POST /v1/admin/users/{id}/unban. Разбан пользователя
+// (authMW + adminMW).
 func (s *Server) handleAdminUserUnban(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -274,7 +293,9 @@ func (s *Server) handleAdminUserUnban(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"unbanned": true})
 }
 
-// GET /v1/admin/comments?video_id=&limit= — список комментариев (не удалённых).
+// handleAdminCommentsList — GET /v1/admin/comments?video_id=&limit=. Список комментариев
+// (authMW + adminMW; не удалённых). Фильтр по video_id опционален: без него — все.
+// limit ограничен 200, по умолчанию 50.
 func (s *Server) handleAdminCommentsList(w http.ResponseWriter, r *http.Request) {
 	videoID, _ := strconv.ParseInt(r.URL.Query().Get("video_id"), 10, 64)
 	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)

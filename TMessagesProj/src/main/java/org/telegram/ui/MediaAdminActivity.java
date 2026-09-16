@@ -29,15 +29,36 @@ import org.telegram.ui.Components.RadialProgressView;
 
 import java.util.ArrayList;
 
+/**
+ * MediaAdminActivity — админ-панель медиа-фида.
+ *
+ * Отображает:
+ *  - сводную статистику (пользователи, видео, магазины, заказы, жалобы) в шапке;
+ *  - список топ-видео и жалоб (Adapter) с действиями бана/разбана/удаления;
+ *  - магазины с возможностью приостановки (suspend);
+ *  - через меню по тапу на шапку — управление фильтр-словами и удаление комментариев.
+ *
+* Сетевые вызовы выполняются в фоне через stageQueue с возвратом на UI-поток.
+  */
 // Админ-панель: статистика, топ видео, репорты (этап 3).
 public class MediaAdminActivity extends Activity {
 
+    // --- Поля экрана админки ---
+    // currentAccount — аккаунт Telegram, под которым открыта панель.
     private final int currentAccount = UserConfig.selectedAccount;
+    // destroyed — флаг: Activity уже уничтожена, UI обновлять нельзя.
     private boolean destroyed;
+    // list — RecyclerView со списком (топ-видео + жалобы + магазины).
     private RecyclerView list;
+    // statsView — шапка со сводной статистикой.
     private TextView statsView;
+    // adapter — адаптер списка админки.
     private AdminAdapter adapter;
 
+    // onCreate — построение UI админки и первичная загрузка данных.
+    // Создаёт корневой FrameLayout: шапку со статистикой (statsView, тап = меню),
+    // свободный список и индикатор загрузки. В фоне грузит adminStats/adminTop/
+    // adminReports/shops и по готовности заполняет UI (либо показывает ошибку).
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -51,6 +72,7 @@ public class MediaAdminActivity extends Activity {
         statsView.setTextSize(14f);
         statsView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         statsView.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(8), AndroidUtilities.dp(12), AndroidUtilities.dp(8));
+        // Тап по шапке открывает меню админки.
         statsView.setOnClickListener(v -> showAdminMenu());
         root.addView(statsView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
@@ -58,12 +80,14 @@ public class MediaAdminActivity extends Activity {
         list.setLayoutManager(new LinearLayoutManager(this));
         adapter = new AdminAdapter();
         list.setAdapter(adapter);
+        // Список размещаем с отступом сверху, чтобы не перекрывать шапку (dp(120)).
         root.addView(list, LayoutHelper.createFrameMarginPx(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP, 0, AndroidUtilities.dp(120), 0, 0));
 
         final RadialProgressView loading = new RadialProgressView(this);
         root.addView(loading, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
         setContentView(root);
 
+        // Загрузка данных в фоне (stageQueue), вывод на UI-поток.
         Utilities.stageQueue.postRunnable(() -> {
             try {
                 JSONObject stats = MediaFeedServerApi.getInstance().adminStats();
@@ -72,6 +96,7 @@ public class MediaAdminActivity extends Activity {
                 JSONArray shops = MediaFeedServerApi.getInstance().shops();
                 AndroidUtilities.runOnUIThread(() -> {
                     if (destroyed) {
+                        // Activity уничтожена — не трогаем UI.
                         return;
                     }
                     statsView.setText(describe(stats));
@@ -79,6 +104,7 @@ public class MediaAdminActivity extends Activity {
                     loading.setVisibility(View.GONE);
                 });
             } catch (Exception e) {
+                // При любой сетевой ошибке прячем спиннер и показываем текст ошибки в шапке.
                 AndroidUtilities.runOnUIThread(() -> {
                     loading.setVisibility(View.GONE);
                     if (!destroyed) {
@@ -89,6 +115,8 @@ public class MediaAdminActivity extends Activity {
         });
     }
 
+    // describe — форматирует JSON-статистику в многострочный текст для шапки (emoji + ключевые счётчики).
+    // Возвращает: String с числом пользователей, видео, магазинов, заказов и жалоб.
     private String describe(JSONObject s) {
         StringBuilder sb = new StringBuilder();
         sb.append("👑 Admin  (tap = filter words)\n");
@@ -100,6 +128,8 @@ public class MediaAdminActivity extends Activity {
         return sb.toString();
     }
 
+    // showAdminMenu — показывает меню админки (диалог) при тапе на шапку.
+    // Пункты: фильтр-слова (открывает manageFilterWords), комментарии (showComments), отмена.
     private void showAdminMenu() {
         if (destroyed) {
             return;
@@ -120,6 +150,9 @@ public class MediaAdminActivity extends Activity {
         builder.show();
     }
 
+    // showComments — диалог со списком всех комментариев (для модерации).
+    // В фоне грузит adminComments(), формирует метки "#id · v<video> · u<user>": текст,
+    // затем диалог; выбор комментария спрашивает подтверждение на удаление (adminDeleteComment).
     private void showComments() {
         if (destroyed) {
             return;
@@ -129,6 +162,7 @@ public class MediaAdminActivity extends Activity {
             final java.util.ArrayList<Integer> ids = new java.util.ArrayList<>();
             try {
                 JSONArray comments = MediaFeedServerApi.getInstance().adminComments();
+                // Идём по комментариям: в ids копим id, в labels — человекочитаемые метки.
                 for (int i = 0; i < comments.length(); i++) {
                     JSONObject c = comments.optJSONObject(i);
                     if (c == null) continue;
@@ -173,6 +207,8 @@ public class MediaAdminActivity extends Activity {
         });
     }
 
+    // onConfigurationChanged — при повороте/смене конфигурации перекрысуем адаптер,
+    // чтобы строки пересчитались под новую ширину экрана.
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
@@ -181,6 +217,9 @@ public class MediaAdminActivity extends Activity {
         }
     }
 
+    // manageFilterWords — диалог управления фильтр-словами.
+    // Показывает текущий список слов и поле ввода нового. Кнопка «Добавить» в фоне
+    // вызывает adminFilterWordAdd, затем refresh(); список слов подгружается асинхронно.
     private void manageFilterWords() {
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
         final LinearLayout content = new LinearLayout(this);
@@ -230,6 +269,8 @@ public class MediaAdminActivity extends Activity {
         });
     }
 
+    // refresh — повторная загрузка статистики, топ-видео, жалоб и магазинов в фоне,
+    // затем обновление шапки и данных адаптера на UI-потоке.
     private void refresh() {
         Utilities.stageQueue.postRunnable(() -> {
             try {
@@ -247,12 +288,18 @@ public class MediaAdminActivity extends Activity {
         });
     }
 
+    // AdminAdapter — RecyclerView-адаптер списка админки.
+    // Хранит список AdminItem, собранных из трёх источников: топ-видео, жалобы и магазины.
     private class AdminAdapter extends RecyclerView.Adapter<AdminHolder> {
 
+        // items — объединённый список строк.
         private final ArrayList<AdminItem> items = new ArrayList<>();
 
+        // set — заполняет items из JSON: сначала топ-видео (с пометкой isTop),
+        // затем жалобы (videoId + reportId), затем магазины. В конце — полный пересчёт списка.
         void set(JSONArray top, JSONArray reports, JSONArray shops) {
             items.clear();
+            // Топ-видео: для каждого видео формируем строку "title\n👁 views ❤ likes 💬 comments".
             if (top != null) {
                 for (int i = 0; i < top.length(); i++) {
                     JSONObject v = top.optJSONObject(i);
@@ -266,6 +313,7 @@ public class MediaAdminActivity extends Activity {
                     items.add(it);
                 }
             }
+            // Жалобы: строка "⚠ reason (video <id>)\nby <user_id> @ <created_at>".
             if (reports != null) {
                 for (int i = 0; i < reports.length(); i++) {
                     JSONObject r = reports.optJSONObject(i);
@@ -278,6 +326,7 @@ public class MediaAdminActivity extends Activity {
                     items.add(it);
                 }
             }
+            // Магазины: строка "🏬 title\npayment_info (status)".
             if (shops != null) {
                 for (int i = 0; i < shops.length(); i++) {
                     JSONObject s = shops.optJSONObject(i);
@@ -295,11 +344,13 @@ public class MediaAdminActivity extends Activity {
         @NonNull
         @Override
         public AdminHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            // Типов у строк нет — всегда один AdminHolder.
             return new AdminHolder(parent);
         }
 
         @Override
         public void onBindViewHolder(@NonNull AdminHolder holder, int position) {
+            // Привязка элемента списка к ячейке.
             holder.bind(items.get(position));
         }
 
@@ -309,6 +360,7 @@ public class MediaAdminActivity extends Activity {
         }
     }
 
+    // AdminItem — POJO-строка списка: идентификаторы видео/жалобы/магазина, флаг топа и текст.
     private class AdminItem {
         long videoId;
         long reportId;
@@ -317,11 +369,14 @@ public class MediaAdminActivity extends Activity {
         String title;
     }
 
+    // AdminHolder — ViewHolder строки админки: вертикальный LinearLayout с текстом.
+    // Клик по строке открывает контекстные действия (см. onRowClicked).
     private class AdminHolder extends RecyclerView.ViewHolder {
 
         private final TextView text;
         private AdminItem item;
 
+        // Конструктор: строит ячейку — вертикальный LinearLayout с отступами и TextView, задаёт клик.
         AdminHolder(ViewGroup parent) {
             super(new LinearLayout(parent.getContext()));
             LinearLayout row = (LinearLayout) itemView;
@@ -337,6 +392,12 @@ public class MediaAdminActivity extends Activity {
             row.setOnClickListener(v -> onRowClicked());
         }
 
+        // onRowClicked — обработка тапа по строке. Определяет тип по заполненным id:
+    //  - магазин (shopId≠0, videoId==0) → диалог с «⛔ Suspend» (adminSuspendShop);
+    //  - жалоба (reportId≠0) → диалог с «✓ reviewed» / «✗ dismissed» (adminReportStatus);
+    //  - видео из топа (isTop) → диалог с «🚫 Ban» / «↩ Unban» / «🗑 Delete»;
+    //  - иначе видео → диалог только с «🚫 Ban» (adminBanVideo).
+    // После каждого действия — refresh() для обновления данных.
         private void onRowClicked() {
             if (item == null) {
                 return;
@@ -424,12 +485,15 @@ public class MediaAdminActivity extends Activity {
             builder.show();
         }
 
+        // bind — привязка элемента AdminItem к ячейке: запоминаем item и выставляем текст.
         void bind(AdminItem it) {
             item = it;
             text.setText(it.title);
         }
     }
 
+    // onDestroy — освобождение: помечаем Activity уничтоженной, чтобы фоновые
+    // колбэки (runOnUIThread) не трогали уже закрытый интерфейс.
     @Override
     protected void onDestroy() {
         super.onDestroy();

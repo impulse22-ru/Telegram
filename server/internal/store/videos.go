@@ -6,8 +6,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// videosRepo — реализация Videos на pgxpool.
 type videosRepo struct{ pg *pgxpool.Pool }
 
+// Insert — добавляет видео; ON CONFLICT по (channel_id, tg_msg_id) игнорирует дубликаты.
 func (r *videosRepo) Insert(ctx context.Context, v Video) error {
 	tags := v.Tags
 	if tags == nil {
@@ -21,6 +23,7 @@ func (r *videosRepo) Insert(ctx context.Context, v Video) error {
 	return err
 }
 
+// VisibleFrom — пагинированный список видимых видео канала, начиная с id > after (курсорная пагинация).
 func (r *videosRepo) VisibleFrom(ctx context.Context, channelID, after, limit int64) ([]Video, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, tg_msg_id, file_id, COALESCE(caption,''), COALESCE(duration_ms,0),
@@ -46,16 +49,19 @@ func (r *videosRepo) VisibleFrom(ctx context.Context, channelID, after, limit in
 	return out, rows.Err()
 }
 
+// Ban — банит видео (меняет статус на 'banned'), скрывая из ленты.
 func (r *videosRepo) Ban(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `UPDATE videos SET status='banned' WHERE id=$1`, id)
 	return err
 }
 
+// Unban — разбанивает видео (возвращает статус 'visible').
 func (r *videosRepo) Unban(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `UPDATE videos SET status='visible' WHERE id=$1`, id)
 	return err
 }
 
+// Delete — soft-удаляет видео (меняет статус на 'deleted', физически остаётся в БД).
 func (r *videosRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.pg.Exec(ctx, `UPDATE videos SET status='deleted' WHERE id=$1`, id)
 	return err
@@ -66,6 +72,7 @@ func (r *videosRepo) Search(ctx context.Context, q string, limit int64) ([]Video
 	if limit <= 0 {
 		limit = 10
 	}
+	// ILIKE с %...% — регистронезависимый поиск по подстроке.
 	pattern := "%" + q + "%"
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, tg_msg_id, file_id, COALESCE(caption,''), COALESCE(duration_ms,0),
@@ -94,6 +101,7 @@ func (r *videosRepo) Count(ctx context.Context, status string) (int64, error) {
 	return n, err
 }
 
+// Get — возвращает видео по ID.
 func (r *videosRepo) Get(ctx context.Context, id int64) (*Video, error) {
 	var v Video
 	err := r.pg.QueryRow(ctx, `
@@ -108,6 +116,7 @@ func (r *videosRepo) Get(ctx context.Context, id int64) (*Video, error) {
 	return &v, nil
 }
 
+// GetByTgMsg — возвращает видео по (channel_id, tg_msg_id) — уникальной паре из Telegram.
 func (r *videosRepo) GetByTgMsg(ctx context.Context, channelID, tgMsgID int64) (*Video, error) {
 	var v Video
 	err := r.pg.QueryRow(ctx, `
@@ -122,6 +131,7 @@ func (r *videosRepo) GetByTgMsg(ctx context.Context, channelID, tgMsgID int64) (
 	return &v, nil
 }
 
+// scanVideos — общий сканер строк в срез Video; используется Search и VisibleFrom.
 func scanVideos(rows interface {
 	Next() bool
 	Scan(...any) error

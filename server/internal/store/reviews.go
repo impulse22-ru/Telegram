@@ -6,8 +6,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// reviewsRepo — реализация Reviews на pgxpool.
 type reviewsRepo struct{ pg *pgxpool.Pool }
 
+// Add — добавляет/обновляет отзыв пользователя на товар: один пользователь — один отзыв (UPSERT).
 func (r *reviewsRepo) Add(ctx context.Context, rev Review) error {
 	_, err := r.pg.Exec(ctx, `
 		INSERT INTO reviews (user_id, product_id, rating, text)
@@ -17,6 +19,7 @@ func (r *reviewsRepo) Add(ctx context.Context, rev Review) error {
 	return err
 }
 
+// ByProduct — возвращает все отзывы на товар в обратном хронологическом порядке.
 func (r *reviewsRepo) ByProduct(ctx context.Context, productID int64) ([]Review, error) {
 	rows, err := r.pg.Query(ctx, `
 		SELECT id, user_id, product_id, rating, COALESCE(text,''), created_at
@@ -37,6 +40,7 @@ func (r *reviewsRepo) ByProduct(ctx context.Context, productID int64) ([]Review,
 	return out, rows.Err()
 }
 
+// AvgRating — средний рейтинг и количество отзывов для товара (0.0 и 0 если отзывов нет).
 func (r *reviewsRepo) AvgRating(ctx context.Context, productID int64) (float64, int64, error) {
 	var avg float64
 	var count int64
