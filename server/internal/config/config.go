@@ -24,18 +24,19 @@ import (
 //   - RelayCacheDir: директория для кэша скачанных видео.
 //   - UploadDir: директория для загружаемых файлов.
 type Config struct {
-	Env           string
-	HTTPAddr      string
-	PGDSN         string
-	RedisAddr     string
-	JWTSecret     string
-	JWTExpiry     time.Duration
-	BotAPIBase    string // http://localhost:8081
-	BotToken      string
-	FeedChID      int64 // закрытый канал ленты (tg_chat_id)
-	RelayPort     string
-	RelayCacheDir string
-	UploadDir     string
+	Env              string
+	HTTPAddr         string
+	PGDSN            string
+	RedisAddr        string
+	JWTSecret        string
+	JWTExpiry        time.Duration
+	JWTRefreshExpiry time.Duration
+	BotAPIBase       string // http://localhost:8081
+	BotToken         string
+	FeedChID         int64 // закрытый канал ленты (tg_chat_id)
+	RelayPort        string
+	RelayCacheDir    string
+	UploadDir        string
 }
 
 // Load — загрузка конфигурации из переменных окружения.
@@ -47,7 +48,8 @@ type Config struct {
 //	PG_DSN → "postgres://tg:tg@localhost:5432/tiktok?sslmode=disable"
 //	REDIS_ADDR → "localhost:6379"
 //	JWT_SECRET → "dev-secret-change-me" — !сменить в проде!
-//	JWT_EXPIRY → 15*time.Minute
+//	JWT_EXPIRY → 15*time.Minute — время жизни access-токена
+//	JWT_REFRESH_EXPIRY → 30*24*time.Hour — время жизни refresh-токена
 //	BOT_API_BASE → "http://localhost:8081" — локальный Bot API (tdlib)
 //	BOT_TOKEN → "" — обязателен для worker и relay
 //	FEED_CHAT_ID → 0 — ID канала, индексируется worker'ом
@@ -59,18 +61,19 @@ type Config struct {
 // Ошибки парсинга игнорируются — используется дефолт.
 func Load() Config {
 	return Config{
-		Env:           get("APP_ENV", "dev"),
-		HTTPAddr:      ":" + get("HTTP_PORT", "8080"),
-		PGDSN:         get("PG_DSN", "postgres://tg:tg@localhost:5432/tiktok?sslmode=disable"),
-		RedisAddr:     get("REDIS_ADDR", "localhost:6379"),
-		JWTSecret:     get("JWT_SECRET", "dev-secret-change-me"),
-		JWTExpiry:     getDur("JWT_EXPIRY", 15*time.Minute),
-		BotAPIBase:    get("BOT_API_BASE", "http://localhost:8081"),
-		BotToken:      get("BOT_TOKEN", ""),
-		FeedChID:      getInt64("FEED_CHAT_ID", 0),
-		RelayPort:     get("RELAY_PORT", "8082"),
-		RelayCacheDir: get("RELAY_CACHE_DIR", "./media_cache"),
-		UploadDir:     get("UPLOAD_DIR", "./uploads"),
+		Env:              get("APP_ENV", "dev"),
+		HTTPAddr:         ":" + get("HTTP_PORT", "8080"),
+		PGDSN:            get("PG_DSN", "postgres://tg:tg@localhost:5432/tiktok?sslmode=disable"),
+		RedisAddr:        get("REDIS_ADDR", "localhost:6379"),
+		JWTSecret:        get("JWT_SECRET", "dev-secret-change-me"),
+		JWTExpiry:        getDur("JWT_EXPIRY", 15*time.Minute),
+		JWTRefreshExpiry: getDur("JWT_REFRESH_EXPIRY", 30*24*time.Hour),
+		BotAPIBase:       get("BOT_API_BASE", "http://localhost:8081"),
+		BotToken:         get("BOT_TOKEN", ""),
+		FeedChID:         getInt64("FEED_CHAT_ID", 0),
+		RelayPort:        get("RELAY_PORT", "8082"),
+		RelayCacheDir:    get("RELAY_CACHE_DIR", "./media_cache"),
+		UploadDir:        get("UPLOAD_DIR", "./uploads"),
 	}
 }
 

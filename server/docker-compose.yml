@@ -81,6 +81,7 @@ services:
       PG_DSN: postgres://tg:tg@postgres:5432/tiktok?sslmode=disable
       REDIS_ADDR: redis:6379
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_REFRESH_EXPIRY: ${JWT_REFRESH_EXPIRY:-720h}
       BOT_API_BASE: http://bot-api:8081
       BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
     ports:
@@ -124,8 +125,72 @@ services:
       BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
       FEED_CHAT_ID: ${FEED_CHAT_ID:?set FEED_CHAT_ID}
 
+  # ---------- Мониторинг (этап: prometheus + grafana) ----------
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    depends_on:
+      api:
+        condition: service_started
+      relay:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Авто-провижининг датасорса Prometheus и дашборда TG Cloud.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml:ro
+      - ./monitoring/grafana/tgcloud.json:/var/lib/grafana/dashboards/tgcloud.json:ro
+      - grafanadata:/var/lib/grafana
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://tg:tg@postgres:5432/tiktok?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------- Резервное копирование ----------
+  # Каждые 6 часов pg_dump -Fc в ./backups, retention 14 дней.
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: tg
+      PGPASSWORD: tg
+      PGDATABASE: tiktok
+    volumes:
+      - ./backups:/backups
+      - ./scripts:/scripts:ro
+    entrypoint: [ "sh", "-c", "while true; do /scripts/backup.sh; sleep 6h; done" ]
+
 volumes:
   pgdata:
   redisdata:
   botapi:
   appdata:
+  promdata:
+  grafanadata:

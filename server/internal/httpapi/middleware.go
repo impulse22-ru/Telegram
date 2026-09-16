@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"tgcloud/server/internal/log"
@@ -15,7 +16,7 @@ func (s *Server) requestLog(next http.Handler) http.Handler {
 		start := time.Now()
 		lw := &logWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(lw, r)
-		s.metrics.inc(r.Method + " " + r.URL.Path)
+		s.metrics.inc(r.Method+" "+r.URL.Path, strconv.Itoa(lw.status), time.Since(start))
 		log.F("http", "method", r.Method, "path", r.URL.Path, "status", lw.status,
 			"dur", time.Since(start).String())
 	})

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -54,6 +55,19 @@ func main() {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("relay ok"))
+	})
+
+	// /metrics — экспорт счётчиков relay в Prometheus text format (без авторизации).
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		m := rl.Metrics()
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = fmt.Fprintf(w,
+			"# HELP relay_streams_total Requests to stream endpoint.\n"+
+				"# TYPE relay_streams_total counter\nrelay_streams_total %d\n"+
+				"# TYPE relay_bytes_total counter\nrelay_bytes_total %d\n"+
+				"# TYPE relay_cache_hits_total counter\nrelay_cache_hits_total %d\n"+
+				"# TYPE relay_not_found_total counter\nrelay_not_found_total %d\n",
+			m.Streams(), m.Bytes(), m.CacheHits(), m.NotFound())
 	})
 
 	// Основной роут: стриминг видео по его внутреннему ID.

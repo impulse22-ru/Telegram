@@ -49,6 +49,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /v1/auth/telegram", s.handleAuthTelegram)
+	mux.HandleFunc("POST /v1/auth/refresh", s.handleAuthRefresh)
+	mux.HandleFunc("POST /v1/auth/logout", s.handleAuthLogout)
 
 	mux.HandleFunc("GET /v1/feed", s.authMW(s.handleFeed))
 	mux.HandleFunc("GET /v1/search", s.authMW(s.handleSearch))
@@ -67,6 +69,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/shops/search", s.authMW(s.handleShopsSearch))
 	mux.HandleFunc("GET /v1/shops/me", s.authMW(s.handleShopsMine))
 	mux.HandleFunc("GET /v1/catalog", s.authMW(s.handleCatalog))
+	mux.HandleFunc("GET /v1/catalog/categories", s.authMW(s.handleCatalogCategories))
 	mux.HandleFunc("GET /v1/shop/{id}", s.authMW(s.handleShopGet))
 	mux.HandleFunc("PUT /v1/shop/{id}", s.authMW(s.handleShopUpdate))
 	mux.HandleFunc("DELETE /v1/shop/{id}", s.authMW(s.handleShopDelete))

@@ -1,7 +1,12 @@
 package org.telegram.ui;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
@@ -10,6 +15,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -28,6 +34,8 @@ import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RadialProgressView;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 
 // Витрина/каталог: магазины → товары → заказ (этапы 6–7).
@@ -48,6 +56,14 @@ public class MediaCatalogActivity extends Activity {
     private LinearLayoutManager layoutManager;
     /** Адаптер, который держит текущий набор элементов (магазины/товары/заказы) */
     private CatalogAdapter adapter;
+    /** Контейнер чипов категорий (горизонтальная прокрутка в заголовке); null до загрузки */
+    private LinearLayout chipsRow;
+    /** Текущая выбранная категория (null = все магазины/товары) */
+    private String selectedCategory;
+    /** URL изображения, загруженного через picker (перед подтверждением формы товара) */
+    private volatile String pendingImageUrl;
+    /** Request code для системного picker'а изображений (ACTION_GET_CONTENT) */
+    private static final int REQ_IMAGE_PICK = 4242;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -94,6 +110,14 @@ public class MediaCatalogActivity extends Activity {
         TextView searchText = button("🔍 Search", v -> showShopSearch());
         header.addView(searchText);
 
+        // Чипы категорий товаров: горизонтальная прокрутка, наполняется из API.
+        HorizontalScrollView chipsScroll = new HorizontalScrollView(this);
+        chipsScroll.setHorizontalScrollBarEnabled(false);
+        chipsRow = new LinearLayout(this);
+        chipsRow.setOrientation(LinearLayout.HORIZONTAL);
+        chipsScroll.addView(chipsRow);
+        header.addView(chipsScroll);
+
         root.addView(header, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
 
         // Список: высота оставляет место под фиксированный заголовок.
@@ -102,7 +126,7 @@ public class MediaCatalogActivity extends Activity {
         list.setLayoutManager(layoutManager);
         adapter = new CatalogAdapter();
         list.setAdapter(adapter);
-        root.addView(list, LayoutHelper.createFrameMarginPx(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP, 0, AndroidUtilities.dp(96), 0, 0));
+        root.addView(list, LayoutHelper.createFrameMarginPx(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP, 0, AndroidUtilities.dp(140), 0, 0));
 
         // Спиннер поверх списка, скрывается после первой загрузки.
         RadialProgressView loading = new RadialProgressView(this);
@@ -122,6 +146,21 @@ public class MediaCatalogActivity extends Activity {
                 });
             } catch (Exception ignore) {
                 AndroidUtilities.runOnUIThread(() -> loading.setVisibility(View.GONE));
+            }
+        });
+
+        // Чипы категорий: "Все" + список категорий, по клику — фильтр каталога.
+        Utilities.stageQueue.postRunnable(() -> {
+            try {
+                JSONArray cats = MediaFeedServerApi.getInstance().categories();
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (destroyed || chipsRow == null) {
+                        return;
+                    }
+                    buildChips(cats);
+                });
+            } catch (Exception ignore) {
+                // Сеть/сервер недоступны — оставляем заголовок без чипов.
             }
         });
     }
@@ -144,6 +183,152 @@ public class MediaCatalogActivity extends Activity {
         tv.setPadding(AndroidUtilities.dp(8), AndroidUtilities.dp(4), AndroidUtilities.dp(8), AndroidUtilities.dp(4));
         tv.setOnClickListener(onClick);
         return tv;
+    }
+
+    /** Построение ряда чипов категорий: всегда "Все" (null/без фильтра)
+     *  + категории с сервера. Клик по чипу фильтрует каталог. */
+    private void buildChips(JSONArray cats) {
+        chipsRow.removeAllViews();
+        // Чип "Все": возврат к полному каталогу (без фильтра).
+        TextView all = chip("Все", selectedCategory == null);
+        all.setOnClickListener(v -> selectChip(all, null));
+        chipsRow.addView(all);
+
+        if (cats != null) {
+            for (int i = 0; i < cats.length(); i++) {
+                final String cat = cats.optString(i);
+                if (cat.isEmpty()) {
+                    continue;
+                }
+                TextView c = chip(cat, cat.equals(selectedCategory));
+                c.setOnClickListener(v -> selectChip(c, cat));
+                chipsRow.addView(c);
+            }
+        }
+    }
+
+    /** Создание одного чипа категории: скруглённый фон, цвет темы; для выбранного — заливка. */
+    private TextView chip(String label, boolean selected) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(AndroidUtilities.dp(16));
+        if (selected) {
+            bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+        } else {
+            bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+            bg.setStroke(AndroidUtilities.dp(1), Theme.getColor(Theme.key_dialogGrayLine));
+        }
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextSize(13f);
+        tv.setTextColor(selected
+                ? Theme.getColor(Theme.key_windowBackgroundWhite)
+                : Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+        tv.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(7), AndroidUtilities.dp(14), AndroidUtilities.dp(7));
+        tv.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = AndroidUtilities.dp(6);
+        tv.setLayoutParams(lp);
+        return tv;
+    }
+
+    /** Выбор чипа: перекрашиваем все чипы, запоминаем категорию, грузим каталог. */
+    private void selectChip(TextView chosen, String category) {
+        if (chipsRow == null) {
+            return;
+        }
+        selectedCategory = category;
+        for (int i = 0; i < chipsRow.getChildCount(); i++) {
+            TextView chip = (TextView) chipsRow.getChildAt(i);
+            boolean sel = chip == chosen;
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.RECTANGLE);
+            bg.setCornerRadius(AndroidUtilities.dp(16));
+            if (sel) {
+                bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+            } else {
+                bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                bg.setStroke(AndroidUtilities.dp(1), Theme.getColor(Theme.key_dialogGrayLine));
+            }
+            chip.setBackground(bg);
+            chip.setTextColor(sel
+                    ? Theme.getColor(Theme.key_windowBackgroundWhite)
+                    : Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+        }
+        adapter.showCatalogCategory(category);
+    }
+
+    /** Запуск системного picker'а изображений (ACTION_GET_CONTENT). Результат в onActivityResult. */
+    private void pickImage() {
+        try {
+            Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+            i.setType("image/*");
+            startActivityForResult(i, REQ_IMAGE_PICK);
+        } catch (Exception ignore) {
+            AndroidUtilities.shakeView(getWindow().getDecorView());
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQ_IMAGE_PICK && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            uploadPickedImage(data.getData());
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    /** Чтение, сжатие и загрузка выбранного изображения в фоне (stageQueue);
+     *  результат (URL) кладётся в pendingImageUrl для формы товара/магазина. */
+    private void uploadPickedImage(final Uri uri) {
+        Utilities.stageQueue.postRunnable(() -> {
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) {
+                    AndroidUtilities.runOnUIThread(() -> AndroidUtilities.shakeView(getWindow().getDecorView()));
+                    return;
+                }
+                // Декодируем с понижением размера: сжатие до ~1280px по большей стороне.
+                Bitmap bmp = BitmapFactory.decodeStream(in);
+                if (bmp == null) {
+                    AndroidUtilities.runOnUIThread(() -> AndroidUtilities.shakeView(getWindow().getDecorView()));
+                    return;
+                }
+                Bitmap scaled = bmp;
+                int maxSide = 1280;
+                int w = bmp.getWidth();
+                int h = bmp.getHeight();
+                int side = Math.max(w, h);
+                if (side > maxSide) {
+                    float k = (float) maxSide / side;
+                    scaled = Bitmap.createScaledBitmap(bmp, (int) (w * k), (int) (h * k), true);
+                    if (scaled != bmp) {
+                        bmp.recycle();
+                    }
+                }
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                scaled.compress(Bitmap.CompressFormat.JPEG, 82, bos);
+                if (scaled != bmp) {
+                    scaled.recycle();
+                }
+                byte[] jpeg = bos.toByteArray();
+
+                // Загружаем на сервер; URL сохраняем для последующего create/update.
+                final String url = MediaFeedServerApi.getInstance().uploadImage(jpeg);
+                pendingImageUrl = url;
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (!destroyed && url != null && !url.isEmpty()) {
+                        AlertDialog.Builder b = new AlertDialog.Builder(MediaCatalogActivity.this);
+                        b.setTitle("🖼");
+                        b.setMessage(getString(R.string.MediaFeedImageReady));
+                        b.setPositiveButton(getString(R.string.OK), null);
+                        b.show();
+                    }
+                });
+            } catch (Exception e) {
+                AndroidUtilities.runOnUIThread(() -> AndroidUtilities.shakeView(getWindow().getDecorView()));
+            }
+        });
     }
 
     /** Показ личной статистики: просмотры, время просмотра, лайки, комменты,
@@ -359,6 +544,51 @@ public class MediaCatalogActivity extends Activity {
             rebuild();
         }
 
+        /** Показ каталога товаров по категории (или без фильтра, если category null).
+         *  items строятся из ответа /v1/catalog без заголовка магазина. */
+        void setCatalogProducts(JSONArray itemsArray) {
+            shops = null;
+            items.clear();
+            if (itemsArray != null) {
+                for (int i = 0; i < itemsArray.length(); i++) {
+                    JSONObject p = itemsArray.optJSONObject(i);
+                    if (p == null) {
+                        continue;
+                    }
+                    ListItem it = new ListItem();
+                    it.productId = p.optLong("id");
+                    it.shopId = p.optLong("shop_id");
+                    it.title = p.optString("title");
+                    it.imageUrl = p.optString("image_url", null);
+                    it.subtitle = "💰 " + p.optDouble("price_amount", 0) + " "
+                            + p.optString("price_currency")
+                            + "  ·  " + p.optString("category");
+                    if (it.imageUrl != null && !it.imageUrl.isEmpty()) {
+                        // Отмечаем товары с картинкой эмодзи-индикатором.
+                        it.subtitle += "  🖼";
+                    }
+                    items.add(it);
+                }
+            }
+            notifyDataSetChanged();
+        }
+
+        /** Загрузка каталога по категории в фоне; null → все товары. */
+        void showCatalogCategory(final String category) {
+            Utilities.stageQueue.postRunnable(() -> {
+                try {
+                    JSONArray arr = MediaFeedServerApi.getInstance().catalog(category);
+                    AndroidUtilities.runOnUIThread(() -> {
+                        if (!destroyed) {
+                            setCatalogProducts(arr);
+                        }
+                    });
+                } catch (Exception e) {
+                    AndroidUtilities.runOnUIThread(() -> AndroidUtilities.shakeView(getWindow().getDecorView()));
+                }
+            });
+        }
+
         /** Показ всех магазинов (кнопка "магазины") с сервера. */
         void showShops() {
             Utilities.stageQueue.postRunnable(() -> {
@@ -514,6 +744,10 @@ public class MediaCatalogActivity extends Activity {
             priceIn.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
             content.addView(priceIn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+            // Выбор нового изображения товара (перезапишет старое при сохранении).
+            content.addView(button("🖼 " + getString(R.string.MediaFeedPickImage), v -> pickImage()),
+                    new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
             builder.setTitle(getString(R.string.MediaFeedEditProduct));
             builder.setView(content);
             builder.setPositiveButton(getString(R.string.OK), (dialog, which) -> {
@@ -530,9 +764,11 @@ public class MediaCatalogActivity extends Activity {
                 }
                 Utilities.stageQueue.postRunnable(() -> {
                     try {
-                        MediaFeedServerApi.getInstance().updateProduct((int) pid, title, desc, price, "RUB", null, null);
+                        final String imgUrl = pendingImageUrl;
+                        MediaFeedServerApi.getInstance().updateProduct((int) pid, title, desc, price, "RUB", null, imgUrl);
                         AndroidUtilities.runOnUIThread(() -> {
                             if (!destroyed && p.shopId != 0) {
+                                pendingImageUrl = null;
                                 adapter.openShop(p.shopId);
                             }
                         });
@@ -607,6 +843,10 @@ public class MediaCatalogActivity extends Activity {
             curIn.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
             content.addView(curIn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+            // Выбор изображения товара: перед созданием можно загрузить картинку.
+            content.addView(button("🖼 " + getString(R.string.MediaFeedPickImage), v -> pickImage()),
+                    new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
             builder.setTitle(getString(R.string.MediaFeedNewProduct));
             builder.setView(content);
             builder.setPositiveButton(getString(R.string.OK), (dialog, which) -> {
@@ -625,10 +865,12 @@ public class MediaCatalogActivity extends Activity {
                 final String currency = curIn.getText().toString().trim().isEmpty() ? "RUB" : curIn.getText().toString().trim();
                 Utilities.stageQueue.postRunnable(() -> {
                     try {
-                        MediaFeedServerApi.getInstance().createProduct(shopId, title, description, price, currency, null, null);
+                        final String imgUrl = pendingImageUrl;
+                        MediaFeedServerApi.getInstance().createProduct(shopId, title, description, price, currency, null, imgUrl);
                         JSONObject resp = MediaFeedServerApi.getInstance().shop((int) shopId);
                         AndroidUtilities.runOnUIThread(() -> {
                             if (!destroyed) {
+                                pendingImageUrl = null;
                                 setShopProducts(resp);
                             }
                         });
@@ -928,6 +1170,7 @@ public class MediaCatalogActivity extends Activity {
         boolean owned;      // владелец ли магазина текущий пользователь
         String title;       // заголовок строки
         String subtitle;    // вторая строка (статус/цена/описание)
+        String imageUrl;    // URL картинки товара (если задана)
         boolean extra; // true = заказ продавца (можно подтвердить)
     }
 

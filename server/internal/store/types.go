@@ -29,17 +29,17 @@ type Channel struct {
 
 // Video — модель видео, загруженного в канал.
 type Video struct {
-	ID         int64    `json:"id"`
-	TgMsgID    int64    `json:"tg_msg_id"`
-	FileID     string   `json:"file_id"`
-	Caption    string   `json:"caption"`
-	DurationMs int      `json:"duration_ms"`
-	Width      int      `json:"width"`
-	Height     int      `json:"height"`
-	Title      string   `json:"title"`
-	Tags       []string `json:"tags"`
-	Status     string   `json:"status"`
-	ChannelID  int64    `json:"channel_id"`
+	ID         int64     `json:"id"`
+	TgMsgID    int64     `json:"tg_msg_id"`
+	FileID     string    `json:"file_id"`
+	Caption    string    `json:"caption"`
+	DurationMs int       `json:"duration_ms"`
+	Width      int       `json:"width"`
+	Height     int       `json:"height"`
+	Title      string    `json:"title"`
+	Tags       []string  `json:"tags"`
+	Status     string    `json:"status"`
+	ChannelID  int64     `json:"channel_id"`
 	PostedAt   time.Time `json:"posted_at"`
 }
 
@@ -213,6 +213,7 @@ type Products interface {
 	Insert(ctx context.Context, p Product) error
 	ListByShop(ctx context.Context, shopID int64) ([]Product, error)
 	ListAllActive(ctx context.Context, limit int64, category string) ([]Product, error)
+	Categories(ctx context.Context) ([]string, error)
 	Get(ctx context.Context, id int64) (*Product, error)
 	Update(ctx context.Context, id int64, title, description string, price float64, currency, category, imageURL string) error
 	Delete(ctx context.Context, id int64) error

@@ -53,8 +53,10 @@ func run(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	// JWT-менеджер: secret — HMAC-ключ для подписи, expiry — время жизни токена.
+	// JWT-менеджер: secret — HMAC-ключ для подписи, expiry — время жизни access-токена.
 	am := auth.NewManager(cfg.JWTSecret, cfg.JWTExpiry)
+	// Привязываем refresh-сессии (Redis): opaque-токены с ротацией и отзывом.
+	am.WithRefresh(cfg.JWTRefreshExpiry, store.NewSessionStore(st.Redis))
 
 	// Клиент Telegram Bot API: опциональный, нужен для команд бота.
 	var bot *tgbot.Client

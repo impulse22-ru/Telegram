@@ -1,0 +1,23 @@
+# Prometheus: scraper для API и relay.
+# Эндпоинты /metrics отдают метрики без авторизации (см. handlers, relay main).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: tg-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8080"]
+
+  - job_name: tg-relay
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["relay:8082"]
+
+  # Внутренний healthcheck: такой scrape никогда не сработает через пробу,
+  # но показывает сам мониторинг в списке таргетов (две линии удобно видеть).
+  - job_name: tg-postgres
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

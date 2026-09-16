@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"tgcloud/server/internal/store"
@@ -34,7 +35,31 @@ type Relay struct {
 	bot        *tgbot.Client // клиент Bot API: getFile + download URL
 	cacheDir   string        // директория для кэш-файлов .mp4
 	httpClient *http.Client  // клиент скачивания (таймаут 5 мин — большие видео)
+	metrics    *RelayMetrics // счётчики стримов, кэш-хитов, байт и ошибок
 }
+
+// RelayMetrics — простые счётчики (атомарные) для /metrics на relay.
+type RelayMetrics struct {
+	streams   atomic.Int64 // всего стрим-запросов
+	bytes     atomic.Int64 // отданных байт
+	cacheHits atomic.Int64 // стримов из кэша (без скачивания)
+	notFound  atomic.Int64 // ошибок not found / недоступных видео
+}
+
+// Streams — количество стрим-запросов.
+func (m *RelayMetrics) Streams() int64 { return m.streams.Load() }
+
+// Bytes — отданных байт суммарно.
+func (m *RelayMetrics) Bytes() int64 { return m.bytes.Load() }
+
+// CacheHits — стримов из кэша.
+func (m *RelayMetrics) CacheHits() int64 { return m.cacheHits.Load() }
+
+// NotFound — ошибок not found.
+func (m *RelayMetrics) NotFound() int64 { return m.notFound.Load() }
+
+// Metrics — доступ к счётчикам relay (для экспорта в /metrics).
+func (r *Relay) Metrics() *RelayMetrics { return r.metrics }
 
 // New — конструктор Relay.
 //
@@ -50,6 +75,7 @@ func New(repos *store.Repos, bot *tgbot.Client, cacheDir string) *Relay {
 		bot:        bot,
 		cacheDir:   cacheDir,
 		httpClient: &http.Client{Timeout: 5 * time.Minute},
+		metrics:    &RelayMetrics{},
 	}
 }
 
@@ -104,7 +130,13 @@ func (r *Relay) Stream(w http.ResponseWriter, req *http.Request, videoID int64) 
 	st, _ := f.Stat()
 	// Явно заявляем поддержку range-запросов (иначе плееры не будут перематывать).
 	w.Header().Set("Accept-Ranges", "bytes")
+	r.metrics.streams.Add(1)
+	r.metrics.cacheHits.Add(1)
 	http.ServeContent(w, req, "video.mp4", st.ModTime(), f)
+	// Вносятся после ServeContent: счётчик так же отражает фактически отданные байты.
+	if st != nil {
+		r.metrics.bytes.Add(st.Size())
+	}
 	return nil
 }
 
@@ -199,6 +231,7 @@ func RelayHandler(r *Relay) http.HandlerFunc {
 		}
 		if err := r.Stream(w, req, id); err != nil {
 			if errors.Is(err, ErrNotFound) {
+				r.metrics.notFound.Add(1)
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}

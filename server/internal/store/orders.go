@@ -171,6 +171,28 @@ func (r *productsRepo) ListByShop(ctx context.Context, shopID int64) ([]Product,
 	return scanProducts(rows)
 }
 
+// Categories — список уникальных категорий товаров активных магазинов
+// (для UI-чипов каталога). Пустые категории исключены.
+func (r *productsRepo) Categories(ctx context.Context) ([]string, error) {
+	rows, err := r.pg.Query(ctx, `
+		SELECT DISTINCT COALESCE(p.category,'') FROM products p JOIN shops s ON s.id=p.shop_id
+		WHERE p.status='on_sale' AND s.status='active' AND COALESCE(p.category,'')<>''
+		ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ListAllActive — все товары всех активных магазинов (витрина/каталог).
 func (r *productsRepo) ListAllActive(ctx context.Context, limit int64, category string) ([]Product, error) {
 	if limit <= 0 {

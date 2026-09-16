@@ -56,7 +56,13 @@ func (s *Server) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "token error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": user})
+	// Дополнительно выдаём refresh-токен (opaque, хранится в Redis).
+	// Если refresh не настроен (store=nil) — просто не включаем поле.
+	var refreshToken string
+	if rt, err := s.auth.IssueRefresh(user.ID); err == nil {
+		refreshToken = rt
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "refresh_token": refreshToken, "user": user})
 }
 
 // handleFeed — GET /v1/feed. Скоринговая лента видео из feedChannelID.

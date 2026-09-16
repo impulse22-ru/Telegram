@@ -11233,6 +11233,8 @@
     <string name="MediaFeedUnsubscribe">Unsubscribe</string>
     <string name="MediaFeedSubscribed">Subscribed</string>
     <string name="MediaFeedBuy">Buy</string>
+    <string name="MediaFeedPickImage">Add image</string>
+    <string name="MediaFeedImageReady">Image uploaded</string>
     <string name="MediaFeedOrders">Orders</string>
     <string name="MediaFeedMyOrders">My orders</string>
     <string name="MediaFeedSellerOrders">My sales</string>

@@ -6,6 +6,10 @@
 *.exe
 
 # Runtime data (bot-api, redis, pg volumes are docker-managed)
+# Дампы бэкапов и медиа-кэш relay
+backups/
+media_cache/
+promdata/
 
 # IDE
 .idea/

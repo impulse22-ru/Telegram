@@ -97,6 +97,21 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// handleCatalogCategories — GET /v1/catalog/categories. Уникальные категории
+// активных товаров (для чипов каталога на клиенте; authMW).
+func (s *Server) handleCatalogCategories(w http.ResponseWriter, r *http.Request) {
+	cats, err := s.repos.Products.Categories(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	// Защита от nil: клиент ждёт JSON-массив.
+	if cats == nil {
+		cats = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"categories": cats})
+}
+
 // handleShopsList — GET /v1/shops. Список всех магазинов (authMW, без пагинации).
 func (s *Server) handleShopsList(w http.ResponseWriter, r *http.Request) {
 	shops, err := s.repos.Shops.List(r.Context())

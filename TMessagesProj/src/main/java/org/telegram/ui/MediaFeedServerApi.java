@@ -38,6 +38,8 @@ public class MediaFeedServerApi {
     public static final String PREF_RELAY_URL = "relay_url";
     // PREF_TOKEN — ключ для bearer-токена.
     public static final String PREF_TOKEN = "token";
+    // PREF_REFRESH_TOKEN — ключ для refresh-токена (ротация через /v1/auth/refresh).
+    public static final String PREF_REFRESH_TOKEN = "refresh_token";
 
     // --- Значения по умолчанию (localhost через эмулятор Android) ---
     // DEFAULT_API_URL — API-сервер по умолчанию.
@@ -55,6 +57,10 @@ public class MediaFeedServerApi {
     private String relayUrl;
     // token — bearer-токен авторизации (null до первого auth()).
     private String token;
+    // refreshToken — refresh-токен для обновления access-токена при 401 (ротация).
+    private String refreshToken;
+    // refreshing — защита от рекурсии: авто-обновление token выполняется максимум один раз.
+    private boolean refreshing;
 
     // getInstance — получить единственный экземпляр singleton-а.
     // Если экземпляр ещё не создан, вызывается приватный конструктор.
@@ -72,6 +78,7 @@ public class MediaFeedServerApi {
         apiUrl = prefs.getString(PREF_API_URL, DEFAULT_API_URL);
         relayUrl = prefs.getString(PREF_RELAY_URL, DEFAULT_RELAY_URL);
         token = prefs.getString(PREF_TOKEN, null);
+        refreshToken = prefs.getString(PREF_REFRESH_TOKEN, null);
     }
 
     // prefs — возвращает SharedPreferences для файла "media_feed_config".
@@ -124,10 +131,33 @@ public class MediaFeedServerApi {
         }
         JSONObject resp = request("POST", "/v1/auth/telegram", body, null);
         token = resp.optString("token", null);
+        refreshToken = resp.optString("refresh_token", null);
         if (token != null) {
-            prefs().edit().putString(PREF_TOKEN, token).apply();
+            prefs().edit().putString(PREF_TOKEN, token).putString(PREF_REFRESH_TOKEN, refreshToken).apply();
         }
         return resp;
+    }
+
+    // refresh() — POST /v1/auth/refresh — ротация access/refresh, когда access истёк (HTTP 401).
+    // Старый refresh-токен считается использованным: сервер отзывает его и выдаёт новый.
+    // Возвращает: JSONObject с новой парой "token" + "refresh_token".
+    public JSONObject refresh() throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("refresh_token", refreshToken);
+        JSONObject resp = request("POST", "/v1/auth/refresh", body, null);
+        token = resp.optString("token", null);
+        refreshToken = resp.optString("refresh_token", null);
+        if (token != null) {
+            prefs().edit().putString(PREF_TOKEN, token).putString(PREF_REFRESH_TOKEN, refreshToken).apply();
+        }
+        return resp;
+    }
+
+    // clearAuth() — сброс токенов (выход): без вызова сервера, просто чистит память и prefs.
+    public void clearAuth() {
+        token = null;
+        refreshToken = null;
+        prefs().edit().remove(PREF_TOKEN).remove(PREF_REFRESH_TOKEN).apply();
     }
 
     // feed() — GET /v1/feed — загрузка ленты видео с дефолтным offset=0, limit=20.
@@ -210,6 +240,13 @@ public class MediaFeedServerApi {
     public JSONArray catalog(String category) throws Exception {
         JSONObject resp = request("GET", "/v1/catalog" + (category != null && !category.isEmpty() ? "?category=" + java.net.URLEncoder.encode(category, "UTF-8") : ""), null, token);
         return resp.optJSONArray("items");
+    }
+
+    // categories() — GET /v1/catalog/categories — уникальные категории товаров для UI-чипов.
+    // Возвращает: JSONArray строк категорий (поле "categories" ответа).
+    public JSONArray categories() throws Exception {
+        JSONObject resp = request("GET", "/v1/catalog/categories", null, token);
+        return resp.optJSONArray("categories");
     }
 
     // shops — GET /v1/shops — получить список всех магазинов.
@@ -491,6 +528,27 @@ public class MediaFeedServerApi {
     }
 
     private JSONObject request(String method, String path, JSONObject body, String bearer) throws Exception {
+        JSONObject resp = requestOnce(method, path, body, bearer);
+        // Авто-обновление: 401 + есть refresh-токен → ротация и повтор запроса один раз.
+        if (resp == null && bearer != null && !refreshing && refreshToken != null && !refreshToken.isEmpty()) {
+            refreshing = true;
+            try {
+                refresh();
+                resp = requestOnce(method, path, body, token);
+            } finally {
+                refreshing = false;
+            }
+        }
+        if (resp == null) {
+            throw new Exception("request failed, http 401");
+        }
+        return resp;
+    }
+
+    // requestOnce — выполнить один HTTP-запрос без авто-рефреша.
+    // Возвращает: JSONObject ответа ({} при пустом теле) или null, если сервер вернул 401
+    // (сигнал для request() попробовать refresh). Прочие HTTP-ошибки — Exception.
+    private JSONObject requestOnce(String method, String path, JSONObject body, String bearer) throws Exception {
         URL url = new URL(apiUrl + path);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod(method);
@@ -521,6 +579,9 @@ public class MediaFeedServerApi {
             }
         }
         conn.disconnect();
+        if (code == 401) {
+            return null;
+        }
         if (code < 200 || code >= 300) {
             throw new Exception("http " + code + ": " + sb);
         }
@@ -590,6 +651,15 @@ public class MediaFeedServerApi {
             }
         }
         conn.disconnect();
+        if (code == 401 && !refreshing && refreshToken != null && !refreshToken.isEmpty()) {
+            refreshing = true;
+            try {
+                refresh();
+                return uploadImage(data);
+            } finally {
+                refreshing = false;
+            }
+        }
         if (code < 200 || code >= 300) {
             throw new Exception("http " + code + ": " + sb);
         }
