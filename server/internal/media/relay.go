@@ -2,6 +2,8 @@ package media
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +38,7 @@ type Relay struct {
 	cacheDir   string        // директория для кэш-файлов .mp4
 	httpClient *http.Client  // клиент скачивания (таймаут 5 мин — большие видео)
 	metrics    *RelayMetrics // счётчики стримов, кэш-хитов, байт и ошибок
+	notifyChat int64         // chat для уведомлений о дубликатах (оператор)
 }
 
 // RelayMetrics — простые счётчики (атомарные) для /metrics на relay.
@@ -69,13 +72,17 @@ func (r *Relay) Metrics() *RelayMetrics { return r.metrics }
 //   - cacheDir: путь к директории кэша (RelayCacheDir из конфига).
 //
 // Таймаут httpClient 5 минут рассчитан на скачивание больших видео файлов.
-func New(repos *store.Repos, bot *tgbot.Client, cacheDir string) *Relay {
+//
+// notifyChat — Telegram chat, куда relay шлёт уведомления о дубликатах
+// (например, ID канала ленты, чтобы оператор увидел пометку). Может быть 0.
+func New(repos *store.Repos, bot *tgbot.Client, cacheDir string, notifyChat int64) *Relay {
 	return &Relay{
 		repos:      repos,
 		bot:        bot,
 		cacheDir:   cacheDir,
 		httpClient: &http.Client{Timeout: 5 * time.Minute},
 		metrics:    &RelayMetrics{},
+		notifyChat: notifyChat,
 	}
 }
 
@@ -117,6 +124,10 @@ func (r *Relay) Stream(w http.ResponseWriter, req *http.Request, videoID int64) 
 		if err := r.fillCache(ctx, video, path); err != nil {
 			return err
 		}
+		// После заливки в кэш появился content_hash — сравниваем с другими.
+		// Если нашёлся уже существующий видимый «близнец» с тем же SHA-256,
+		// помечаем текущее видео дубликатом и скрываем из ленты.
+		r.checkContentHashDuplicate(ctx, video)
 	}
 
 	// Открываем кэш-файл; defer f.Close() освободит дескриптор после ServeContent.
@@ -148,6 +159,10 @@ func (r *Relay) Stream(w http.ResponseWriter, req *http.Request, videoID int64) 
 //  2. GET {baseURL}/file/bot<token>/<path> → скачиваем потоковым io.Copy.
 //  3. Пишем во временный файл <path>.part (в той же директории/FS).
 //  4. fsync (out.Sync) + close, затем os.Rename — операция атомарная в POSIX.
+//
+// Параллельно с копированием считается SHA-256 контента (TeeReader) — это
+// точная дедупликация уровня 2. Хэш сохраняется в БД (SetContentHash), чтобы
+// relay смог сравнить новый файл с уже скачанными (см. checkContentHashDuplicate).
 //
 // Если rename проходит успешно — .part не существует, defer os.Remove — no-op.
 // Возвращает ошибку на любом этапе: getFile, сетевой download, запись на диск.
@@ -185,13 +200,15 @@ func (r *Relay) fillCache(ctx context.Context, video *store.Video, path string) 
 	defer os.Remove(tmp) // игнор: если rename успешен — файла нет
 
 	// Шаг 4: потоковое копирование из ответа HTTP в файл.
+	// TeeReader дублирует поток в SHA-256 — считаем хэш, не читая файл дважды.
+	hasher := sha256.New()
 	ok := false
 	defer func() {
 		if !ok {
 			_ = out.Close() // при ошибке закрываем, чтобы deferred Remove смог удалить
 		}
 	}()
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	if _, err := io.Copy(out, io.TeeReader(resp.Body, hasher)); err != nil {
 		return err
 	}
 
@@ -207,7 +224,53 @@ func (r *Relay) fillCache(ctx context.Context, video *store.Video, path string) 
 	// Шаг 6: атомарный rename .part → финальный путь.
 	// Повторные одновременные запросы могут писать один .part — допускается,
 	// последний выигравший rename побеждает (данные одни и те же).
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+
+	// Шаг 7: сохраняем SHA-256 содержимого видео (точная дедупликация).
+	// Ошибка сохранения не роняет стрим — только логируется.
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	if err := r.repos.Videos.SetContentHash(ctx, video.ID, hash); err != nil {
+		log.Printf("relay: set content hash %d: %v", video.ID, err)
+	}
+	return nil
+}
+
+// checkContentHashDuplicate — пост-заливка: если в БД уже есть видимое видео
+// с тем же SHA-256 (и это не текущее), помечаем текущее как duplicate.
+//
+// Уровень 2 дедупликации: indexer ловит точные копии по file_unique_id и
+// метаданные-близнецы по content_signature, но перекодированный файл (другой
+// размер/параметры) может пройти оба фильтра. После скачивания в кэш содержимое
+// известно — сравниваем настоящие SHA-256 хэши.
+func (r *Relay) checkContentHashDuplicate(ctx context.Context, video *store.Video) {
+	// Хэш мог не сохраниться (например, отписка/сбой) — повторяем запрос видео.
+	v, err := r.repos.Videos.Get(ctx, video.ID)
+	if err != nil || v.ContentHash == "" {
+		return
+	}
+	dup, err := r.repos.Videos.FindByContentHash(ctx, v.ContentHash)
+	if err != nil || dup.ID == v.ID {
+		return
+	}
+	// Совпадение с другим видимым видео — помечаем текущее дубликатом и скрываем.
+	if err := r.repos.Videos.SetDuplicate(ctx, v.ID); err != nil {
+		log.Printf("relay: mark duplicate %d: %v", v.ID, err)
+		return
+	}
+	// Убираем из Redis-ленты, чтобы дубликат не торчал у пользователей.
+	if err := r.repos.Feed.RemoveVideo(ctx, v.ChannelID, v.ID); err != nil {
+		log.Printf("relay: remove dup from feed %d: %v", v.ID, err)
+	}
+	// Уведомляем оператора в канале ленты (настраиваемый notifyChat).
+	if r.notifyChat != 0 {
+		msg := fmt.Sprintf("⚠️ Дубликат (по содержимому).\nОригинал: #%d\nКопия: #%d\nСкрыта из ленты",
+			dup.ID, v.ID)
+		if err := r.bot.SendMessage(r.notifyChat, msg); err != nil {
+			log.Printf("relay: duplicate notify: %v", err)
+		}
+	}
 }
 
 // ErrNotFound — sentinel-ошибка «медиа не найдено».

@@ -29,18 +29,21 @@ type Channel struct {
 
 // Video — модель видео, загруженного в канал.
 type Video struct {
-	ID         int64     `json:"id"`
-	TgMsgID    int64     `json:"tg_msg_id"`
-	FileID     string    `json:"file_id"`
-	Caption    string    `json:"caption"`
-	DurationMs int       `json:"duration_ms"`
-	Width      int       `json:"width"`
-	Height     int       `json:"height"`
-	Title      string    `json:"title"`
-	Tags       []string  `json:"tags"`
-	Status     string    `json:"status"`
-	ChannelID  int64     `json:"channel_id"`
-	PostedAt   time.Time `json:"posted_at"`
+	ID               int64     `json:"id"`
+	TgMsgID          int64     `json:"tg_msg_id"`
+	FileID           string    `json:"file_id"`
+	FileUniqueID     string    `json:"file_unique_id"`    // стабильный ID файла в Telegram
+	ContentSignature string    `json:"content_signature"` // хэш метаданных для быстрой дедупликации
+	ContentHash      string    `json:"content_hash"`      // SHA-256 содержимого (заполняется relay)
+	Caption          string    `json:"caption"`
+	DurationMs       int       `json:"duration_ms"`
+	Width            int       `json:"width"`
+	Height           int       `json:"height"`
+	Title            string    `json:"title"`
+	Tags             []string  `json:"tags"`
+	Status           string    `json:"status"`
+	ChannelID        int64     `json:"channel_id"`
+	PostedAt         time.Time `json:"posted_at"`
 }
 
 // Shop — модель магазина продавца.
@@ -193,6 +196,16 @@ type Videos interface {
 	Delete(ctx context.Context, id int64) error
 	Get(ctx context.Context, id int64) (*Video, error)
 	Count(ctx context.Context, status string) (int64, error)
+	// FindBySignature ищет видимое видео с такой же content_signature (возможный дубликат).
+	FindBySignature(ctx context.Context, signature string) (*Video, error)
+	// FindByFileUniqueID ищет видимое видео с таким же file_unique_id (точная копия).
+	FindByFileUniqueID(ctx context.Context, fileUniqueID string) (*Video, error)
+	// FindByContentHash ищет видимое видео с таким же content_hash (SHA-256 файла).
+	FindByContentHash(ctx context.Context, hash string) (*Video, error)
+	// SetDuplicate помечает видео как дубликат (скрывает из ленты).
+	SetDuplicate(ctx context.Context, id int64) error
+	// SetContentHash сохраняет SHA-256 содержимого после заливки кэша relay.
+	SetContentHash(ctx context.Context, id int64, hash string) error
 }
 
 // Shops — репозиторий магазинов: CRUD, поиск, приостановка.

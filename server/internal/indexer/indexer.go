@@ -2,6 +2,9 @@ package indexer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -107,8 +110,12 @@ func (ix *Indexer) Handle(ctx context.Context, u *tgbot.Update) HandleResult {
 //  2. Собирает store.Video: TgMsgID (для дедупликации), FileID, метаданные,
 //     Title из первой строки подписи, Tags из #хэштегов.
 //  3. Проверяет подпись по чёрному списку (isBlocked) → статус "banned".
-//  4. Insert в БД (UNIQUE по (channel_id, tg_msg_id) запрещает дубли).
-//  5. Если видео видимое — публикует в Redis-ленту со score = unix time поста.
+//  4. Дубликат-детекция: если видео с таким file_unique_id (точная копия) или
+//     content_signature (перекодированная копия) уже есть в ленте — помечаем
+//     новое как "duplicate" и уведомляем оператора в канале. Дубль не
+//     публикуется в Redis-ленту.
+//  5. Insert в БД (UNIQUE по (channel_id, tg_msg_id) запрещает дубли).
+//  6. Если видео видимое — публикует в Redis-ленту со score = unix time поста.
 //
 // Возвращает ошибку, если Вставка в БД или публикация в ленту не удались.
 func (ix *Indexer) indexVideo(ctx context.Context, m *tgbot.Message) error {
@@ -129,6 +136,22 @@ func (ix *Indexer) indexVideo(ctx context.Context, m *tgbot.Message) error {
 		ChannelID:  channelID,
 		PostedAt:   time.Unix(m.Date, 0),
 	}
+	// Вычисляем сигнатуру метаданных заранее: интернируем file_unique_id и
+	// хэш (duration_ms,width,height,file_size) как ключи дедупликации.
+	v.FileUniqueID = m.Video.FileUniqueID
+	v.ContentSignature = contentSignature(m.Video)
+
+	// Дубликат-детекция: точная копия (file_unique_id) или метаданные-близнец
+	// (content_signature). Для closed ленты это лучший дешёвый фильтр без
+	// скачивания файла. Дубликат скрывается из ленты и сообщается оператору.
+	if dup := ix.findDuplicate(ctx, &v); dup != nil {
+		v.Status = "duplicate"
+		if err := ix.repos.Videos.Insert(ctx, v); err != nil {
+			return err
+		}
+		ix.notifyDuplicate(ctx, dup, &v)
+		return nil
+	}
 
 	// Фильтрация: чёрный список слов → автоматический бан (этап 5).
 	if ix.isBlocked(ctx, m.Caption) {
@@ -143,6 +166,55 @@ func (ix *Indexer) indexVideo(ctx context.Context, m *tgbot.Message) error {
 		return ix.repos.Feed.AddVideo(ctx, channelID, vid.ID, float64(m.Date))
 	}
 	return nil
+}
+
+// findDuplicate ищет уже существующее видимое видео-«близнеца».
+//
+// Порядок проверки (от дешёвого к дорогому):
+//  1. file_unique_id — стабильный идентификатор файла в Telegram. Одинаков для
+//     одного и того же файла, даже если его перезалили повторно. Точная копия.
+//  2. content_signature — хэш (duration,width,height,file_size). Ловит копии,
+//     перекодированные с теми же визуальными параметрами и длительностью.
+//
+// Точный SHA-256 содержимого (content_hash) проверяется позже — в relay,
+// т.к. для его вычисления нужен скачанный файл (уровень 2, см. IMPROVEMENTS.md).
+// Возвращает nil, если совпадений не найдено (видео уникально).
+func (ix *Indexer) findDuplicate(ctx context.Context, v *store.Video) *store.Video {
+	if v.FileUniqueID != "" {
+		if dup, err := ix.repos.Videos.FindByFileUniqueID(ctx, v.FileUniqueID); err == nil {
+			return dup
+		}
+	}
+	if v.ContentSignature != "" {
+		if dup, err := ix.repos.Videos.FindBySignature(ctx, v.ContentSignature); err == nil {
+			return dup
+		}
+	}
+	return nil
+}
+
+// notifyDuplicate уведомляет оператора (в канал ленты) о найденном дубликате.
+// Текст: ID оригинала, ID дубликата-копии и длительность. Ошибки при отправке
+// не считаются фатальными — логируем и продолжаем.
+func (ix *Indexer) notifyDuplicate(ctx context.Context, dup, copy *store.Video) {
+	msg := fmt.Sprintf(
+		"⚠️ Дубликат видео.\nОригинал: #%d\nКопия: #%d\nДлительность: %.0fс\nБыла скрыта из ленты",
+		dup.ID, copy.ID, float64(copy.DurationMs)/1000)
+	if err := ix.bot.SendMessage(ix.feedChat, msg); err != nil {
+		log.Printf("indexer: duplicate notify: %v", err)
+	}
+}
+
+// contentSignature строит сигнатуру метаданных видео: хэш от
+// (duration_ms|width|height|file_size). Используется для быстрой дедупликации
+// без скачивания файла: копии одного ролика обычно совпадают по этим полям.
+func contentSignature(v *tgbot.Video) string {
+	if v == nil {
+		return ""
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%d|%d|%d|%d", v.Duration*1000, v.Width, v.Height, v.FileSize)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // indexProduct — товар из канала-магазина.

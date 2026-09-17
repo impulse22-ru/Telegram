@@ -47,7 +47,8 @@ func main() {
 	bot := tgbot.New(cfg.BotAPIBase, cfg.BotToken)
 
 	// Relay — ядро: связывает store (поиск видео), bot (скачивание) и кэш (диск).
-	rl := media.New(store.NewRepos(st), bot, cfg.RelayCacheDir)
+	// notifyChat = FeedChID: уведомления о дубликатах уходят в канал ленты.
+	rl := media.New(store.NewRepos(st), bot, cfg.RelayCacheDir, cfg.FeedChID)
 
 	mux := http.NewServeMux()
 

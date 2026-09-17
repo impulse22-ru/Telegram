@@ -51,12 +51,13 @@ type Chat struct {
 // Duration указан в секундах — при сохранении в БД переводится в миллисекунды.
 // FileID — идентификатор для метода getFile (скачивание через relay).
 type Video struct {
-	FileID   string `json:"file_id"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	Duration int    `json:"duration"` // секунды
-	MimeType string `json:"mime_type"`
-	FileSize int64  `json:"file_size"`
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	Duration     int    `json:"duration"` // секунды
+	MimeType     string `json:"mime_type"`
+	FileSize     int64  `json:"file_size"`
 }
 
 // ChatJoinRequest — запрос пользователя на вступление в закрытый чат.
